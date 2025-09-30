@@ -1,0 +1,9 @@
+requests
+pillow
+opencv-python
+pymupdf
+numpy
+fastapi
+uvicorn
+python-multipart
+python-dotenv

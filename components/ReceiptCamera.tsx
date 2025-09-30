@@ -1,0 +1,136 @@
+﻿'use client'
+
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { X, Camera } from 'lucide-react'
+
+interface ReceiptCameraProps {
+  onCapture: (imageBlob: Blob) => void
+  onClose: () => void
+}
+
+const isMobileApp = () => {
+  return typeof window !== 'undefined' && (
+    window.location.protocol === 'capacitor:' ||
+    window.location.protocol === 'ionic:' ||
+    /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  )
+}
+
+export default function ReceiptCamera({ onCapture, onClose }: ReceiptCameraProps) {
+  const [error, setError] = useState<string | null>(null)
+  const [isCapturing, setIsCapturing] = useState(false)
+
+  const handleMobilePhotoCapture = async () => {
+    setIsCapturing(true)
+    try {
+      if (isMobileApp()) {
+        try {
+          const { Camera } = await import('@capacitor/camera')
+          const { CameraResultType, CameraSource } = await import('@capacitor/camera')
+          
+          const image = await Camera.getPhoto({
+            quality: 90,
+            allowEditing: false,
+            resultType: CameraResultType.DataUrl,
+            source: CameraSource.Camera
+          })
+
+          if (image.dataUrl) {
+            const response = await fetch(image.dataUrl)
+            const blob = await response.blob()
+            onCapture(blob)
+          }
+          return
+        } catch (capacitorError) {
+          console.warn('Capacitor Camera not available:', capacitorError)
+        }
+      }
+
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.capture = 'environment'
+      
+      input.onchange = async (event) => {
+        const file = (event.target as HTMLInputElement).files?.[0]
+        if (file) {
+          onCapture(file)
+        }
+      }
+      
+      input.click()
+    } catch (err) {
+      console.error('Photo capture failed:', err)
+      setError('Camera access failed. Please try again.')
+    } finally {
+      setIsCapturing(false)
+    }
+  }
+
+  if (error) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-xl p-6 max-w-sm w-full">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Camera Error</h3>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <div className="flex gap-2">
+            <Button 
+              className="flex-1" 
+              onClick={() => {
+                setError(null)
+                handleMobilePhotoCapture()
+              }}
+            >
+              Retry
+            </Button>
+            <Button variant="outline" className="flex-1" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black z-50 flex flex-col">
+      <div className="flex items-center justify-between p-4 bg-black text-white">
+        <h2 className="text-lg font-semibold">Capture Receipt</h2>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          className="text-white hover:bg-gray-800"
+        >
+          <X className="w-5 h-5" />
+        </Button>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center bg-gray-900">
+        <div className="text-center text-white p-8">
+          <Camera className="w-24 h-24 mx-auto mb-6 opacity-60" />
+          <h3 className="text-xl font-semibold mb-4">Receipt Camera</h3>
+          <p className="mb-6 opacity-80">Capture a photo of your receipt</p>
+          <Button 
+            onClick={handleMobilePhotoCapture}
+            disabled={isCapturing}
+            className="bg-emerald-500 hover:bg-emerald-600 px-8 py-3 text-lg"
+          >
+            <Camera className="w-6 h-6 mr-3" />
+            {isCapturing ? 'Opening Camera...' : 'Capture Receipt'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="p-4 bg-black text-white text-center">
+        <p className="text-sm opacity-80">Make sure the receipt is well-lit</p>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OCR Test</title>
+</head>
+<body>
+    <h1>OCR Endpoint Test</h1>
+    <input type="file" id="fileInput" accept="image/*">
+    <button onclick="testOcr()">Test OCR</button>
+    <div id="result"></div>
+
+    <script>
+        async function testOcr() {
+            const fileInput = document.getElementById('fileInput');
+            const resultDiv = document.getElementById('result');
+            
+            if (!fileInput.files[0]) {
+                alert('Please select a file');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = async function(e) {
+                const base64Image = e.target.result;
+                
+                try {
+                    console.log('Making request to OCR endpoint...');
+                    const response = await fetch('/api/ocr/receipt', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ imageDataUrl: base64Image })
+                    });
+                    
+                    console.log('Response status:', response.status);
+                    console.log('Content-Type:', response.headers.get('content-type'));
+                    
+                    const text = await response.text();
+                    console.log('Response text:', text);
+                    
+                    try {
+                        const data = JSON.parse(text);
+                        resultDiv.innerHTML = '<h3>Success!</h3><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    } catch (e) {
+                        resultDiv.innerHTML = '<h3>JSON Parse Error</h3><p>Response was not JSON:</p><pre>' + text.substring(0, 500) + '</pre>';
+                    }
+                    
+                } catch (error) {
+                    console.error('Request failed:', error);
+                    resultDiv.innerHTML = '<h3>Request Error</h3><p>' + error.message + '</p>';
+                }
+            };
+            
+            reader.readAsDataURL(file);
+        }
+    </script>
+</body>
+</html>
