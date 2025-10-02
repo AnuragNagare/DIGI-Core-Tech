@@ -280,13 +280,13 @@ async def health_check():
 # Development server
 if __name__ == "__main__":
     print("🚀 Starting AI Shopping List API Server...")
-    print("📝 API Documentation: http://localhost:8001/docs")
-    print("🔍 Health Check: http://localhost:8001/api/shopping/health-check")
+    print("📝 API Documentation: http://localhost:8002/docs")
+    print("🔍 Health Check: http://localhost:8002/api/shopping/health-check")
     
     uvicorn.run(
         "ai_shopping_api:app",
         host="0.0.0.0",
-        port=8001,
+        port=8002,
         reload=True,
         log_level="info"
     )

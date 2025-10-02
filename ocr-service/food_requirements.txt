@@ -1,35 +1,37 @@
 # Food Classification Service Requirements
 
 # Core ML Framework
-torch==2.1.0+cpu
-torchvision==0.16.0+cpu
-numpy==1.24.3
+torch>=2.2.0
+numpy>=2.0.0
+
+# Vision & NLP Models
+transformers>=4.45.0
+huggingface-hub>=0.20.0
 
 # Image Processing
-Pillow==10.0.0
-opencv-python==4.8.0.74
-opencv-contrib-python==4.8.1.78
+Pillow>=10.0.0
+opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
 
 # Web Framework
-fastapi==0.104.1
-uvicorn==0.24.0
-python-multipart==0.0.6
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.7
 
 # Utilities
-requests==2.31.0
-python-dotenv==1.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
 
 # Calorie Calculation
-scipy==1.11.3
-pandas==2.0.3
+scipy>=1.11.0
+pandas>=2.0.0
 
-# Optional: For better food classification
-# transformers==4.35.0
-# timm==0.9.7
+# Optional accelerators
+timm>=0.9.7
 
 # System Requirements:
 # 1. Install PyTorch with CPU support (already included above)
-# 2. For GPU support, replace torch==2.1.0+cpu with torch==2.1.0+cu118
+# 2. For GPU support, install matching CUDA build of torch + torchvision
 # 3. Memory usage: ~1-2GB RAM
 # 4. Model download: ~500MB initial download
 

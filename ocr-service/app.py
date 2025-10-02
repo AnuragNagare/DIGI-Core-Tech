@@ -15,7 +15,12 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-ocr_service = EnhancedOCRService()
+try:
+    ocr_service = EnhancedOCRService()
+except Exception as e:
+    print(f"Error initializing EnhancedOCRService: {e}")
+    import sys
+    sys.exit(1)
 
 app = FastAPI()
 
@@ -111,12 +116,18 @@ async def process_ocr(file: UploadFile = File(...), lang: str = "en"):
         
         ocr_language = language_mapping.get(lang.lower(), lang.lower())
         
-        # Use enhanced OCR service
-        ocr_result = ocr_service.extract_text_from_image_bytes(contents, language=ocr_language)
+        # Use enhanced OCR service with AI parsing
+        ocr_result = ocr_service.extract_text_from_image_bytes(contents, language=ocr_language, use_ai=True)
         
         if ocr_result.get('success'):
-            # Parse receipt text with advanced parsing
-            parsed_data = ocr_service.advanced_parse_receipt_text(ocr_result.get('text', ''))
+            # Get AI-extracted items if available
+            ai_items = ocr_result.get('ai_items', [])
+            
+            # Parse receipt text with advanced parsing (will use AI items if available)
+            parsed_data = ocr_service.advanced_parse_receipt_text(
+                ocr_result.get('text', ''),
+                ai_items=ai_items
+            )
             
             # Format for display
             formatted_display = ocr_service.format_receipt_display(parsed_data)
