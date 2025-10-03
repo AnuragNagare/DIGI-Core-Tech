@@ -143,10 +143,15 @@ class IntelligentReceiptParser:
         critical_blacklist = {
             # Financial terms
             'subtotal', 'sub-total', 'sub total', 'total', 'grand total', 'final total',
+            'm subtotal', 'l subtotal', 's subtotal', 'xl subtotal',  # Size-based subtotals
             'take-out total', 'take out total', 'takeout total', 'dine-in total',
             'change', 'cash tendered', 'cash received', 'credit card', 'debit card',
             'balance', 'balance due', 'amount due', 'amount paid', 'payment',
             'cash', 'credit', 'debit', 'visa', 'mastercard', 'amex', 'discover',
+            
+            # Loyalty and rewards
+            'loyalty', 'loyalty points', 'points', 'rewards', 'member savings',
+            'loyalty discount', 'member discount', 'club discount',
             
             # Taxes and fees
             'tax', 'gst', 'pst', 'hst', 'vat', 'sales tax', 'local tax', 'tip',
@@ -174,10 +179,10 @@ class IntelligentReceiptParser:
             
             # OCR corrupted non-food items (based on test results)
             'sumage liberin', 'burte eva line', 'hah browne', 'liced corien',
-            'whanwyrith', 'knonuy nib discount aeuismod lis', 'aeuismod',
+            'whanwyrith', 'knonuy nib discount aeuismod lis',
             
-            # Garbled text patterns that aren't food
-            'liberin', 'browne', 'corien', 'whanwyrith', 'knonuy', 'aeuismod',
+            # Garbled text patterns that aren't food (but NOT aeuismod - it's valid Lorem food)
+            'liberin', 'browne', 'corien', 'whanwyrith', 'knonuy',
             'lis', 'eva line', 'una line', 'line una', 'line eva',
             
             # Survey/feedback
@@ -230,12 +235,21 @@ class IntelligentReceiptParser:
             
             # Lines with only codes/numbers and prices (likely not food)
             r'^\s*\d{3,6}\s*[:,-]?\s*\$?\d+[\.,]\d{2}\s*$',  # "02753: $2.99" type
-            r'^\s*\d{1,2}[:]\d{3,6}\s*[,\s]*.*\$?\d+[\.,]\d{2}\s*$',  # "8:3556, ..." type
         ]
         
         for pattern in total_patterns:
             if re.match(pattern, text_lower):
                 logger.debug(f"  ❌ Total pattern match: '{pattern}'")
+                return True
+        
+        # Special handling for numbered-code lines like "1: 0275 Ut Wisi Enim 2.99"
+        if re.match(r'^\s*\d{1,2}[:]\s*\d{3,6}', text_lower):
+            # Allow if there's descriptive text after the codes
+            if re.search(r'[a-zA-Z]{3,}', item_name_only):
+                logger.debug("  ✅ Numbered code line with description - allowing")
+                pass
+            else:
+                logger.debug("  ❌ Numbered code line without description")
                 return True
         
         # Check for date patterns (be more specific)
@@ -291,12 +305,26 @@ class IntelligentReceiptParser:
         # If it starts with a number followed by kg/lb/etc and contains NET, it's a unit line
         if re.match(r'^\d+\.?\d*\s*(kg|g|lb|oz|net|wt)', text_lower):
             return True
-        
+
+        # Lines that describe net weight or price per unit (even with OCR errors)
+        if 'net' in text_lower and '@' in text_lower:
+            return True
+
+        # Catch patterns like "Net @ /Ko", "I 1.928Kq", etc.
+        if re.search(r'net\s*@\s*/?\s*[a-z]{1,3}', text_lower):
+            return True
+            
+        if re.search(r'[a-z]\s+\d+\.\d+\s*[a-z]{1,3}', text_lower):  # "I 1.928Kq" pattern
+            return True
+
+        if re.search(r'@\s*/?\s*[\w]{1,3}', text_lower) and any(unit in text_lower for unit in ['kg', 'kq', 'lb', 'oz', '/kg', '/lb']):
+            return True
+
         # If it's ONLY unit keywords
         words = text_lower.split()
         if all(word in self.UNIT_ONLY_KEYWORDS or word.replace('.', '').isdigit() for word in words):
             return True
-        
+
         return False
     
     def is_likely_food_item(self, text: str) -> bool:
@@ -311,6 +339,16 @@ class IntelligentReceiptParser:
         
         # Remove price portion for better analysis
         text_clean = re.sub(r'\s*\$?\d+[\.,]\d{2}\s*$', '', text_lower).strip()
+        
+        # FIRST: Check if this is explicitly blacklisted (like "subtotal", "loyalty", etc.)
+        if self.is_blacklisted(text_clean):
+            logger.debug(f"  ❌ Blacklisted item rejected: '{text_clean}'")
+            return False
+        
+        # SECOND: Check if this is just a unit descriptor (weight/measure without item name)
+        if self.is_unit_descriptor_only(text_clean):
+            logger.debug(f"  ❌ Unit descriptor rejected: '{text_clean}'")
+            return False
         
         # Split into words for analysis
         words = [w.strip() for w in text_clean.split() if w.strip()]
@@ -424,10 +462,15 @@ class IntelligentReceiptParser:
                     for word in words
                 )
                 
-                # Common grocery formats: "ITEM NAME" or "Item Name" 
+                # Common grocery formats: "ITEM NAME" or "Item Name" - but exclude blacklisted terms
                 if (text.isupper() or text.istitle()) and 2 <= len(words) <= 4:
-                    logger.debug(f"  📝 Grocery format detected: caps/title case")
-                    return True
+                    # Check if any word is blacklisted first
+                    if not self.is_blacklisted(text_clean):
+                        logger.debug(f"  📝 Grocery format detected: caps/title case")
+                        return True
+                    else:
+                        logger.debug(f"  ❌ Grocery format blacklisted: '{text_clean}'")
+                        return False
                 
                 # If it has recognizable food words, allow it
                 if has_food_word:
@@ -442,6 +485,21 @@ class IntelligentReceiptParser:
                     if len(reasonable_words) >= 1:
                         logger.debug(f"  ✨ Reasonable structure accepted: '{text_clean}'")
                         return True
+
+                # Allow single-word items if they look like real words (lengthy and alphabetic) AND not blacklisted
+                if len(words) == 1 and text_clean.isalpha() and len(text_clean) >= 5:
+                    # But first check if this single word is blacklisted (like "subtotal", "loyalty", etc.)
+                    if not self.is_blacklisted(text_clean):
+                        logger.debug(f"  ✅ Single-word item accepted: '{text_clean}'")
+                        return True
+                    else:
+                        logger.debug(f"  ❌ Single-word blacklisted: '{text_clean}'")
+                        return False
+        
+        # Check if this is a unit descriptor only (weight/measure without actual item name)
+        if self.is_unit_descriptor_only(text_clean):
+            logger.debug(f"  ❌ Unit descriptor only: '{text_clean}'")
+            return False
         
         logger.debug(f"  ❌ Not identified as food item: '{text_clean}'")
         return False
@@ -648,6 +706,9 @@ class IntelligentReceiptParser:
             r'\s*line\s+\d+\s*$',
             r'\s*line\s+\d+\s*',
             r'\s*ln\s*\d+\s*',
+
+            # Numbered list with embedded code: "1: 0275"
+            r'^\d{1,2}\s*[:\.]\s*\d{3,6}\s+',
             
             # Item codes at start: "02753", "0257", "9463" (4-5 digit codes)
             r'^\d{3,6}[:\s]+',
@@ -718,17 +779,8 @@ class IntelligentReceiptParser:
             r'^(credit|debit|card|cash|payment|cardit|caro).*$',
             
             # Remove corrupted versions of common promotional terms (OCR errors)
-            r'^(duy\s+ona|gel\s+one|buy\s+one).*$',  # OCR errors for "Buy One"
+            r'^(duy\s+ona|gel\s+one|buy\s+one).*$' ,  # OCR errors for "Buy One"
             r'.*get\s+one\s+(une|line).*$',         # "Get One Line" corruptions
-            
-            # Remove corrupted food names that are mostly garbled
-            r'^(sumage|liberin|browne|corien|whanwyrith|knonuy|aeuismod).*$',
-            r'^(burte|hah|liced|dains|alob|vom).*$',
-            r'.*\s+(corien|liberin|browne|whanwyrith).*$',  # Garbled endings
-            
-            # Remove items that start with multiple numbers/codes
-            r'^\d+[\.:]\d+.*$',     # "4.0557 ..." or "6:3463 ..." patterns
-            r'^\d{3,}[:\s].*$',     # "02753 ..." patterns
             
             # Remove discount/promotion indicators
             r'.*discount.*$',
@@ -900,10 +952,11 @@ class IntelligentReceiptParser:
             if has_price:  # Any line with a price could be a group header or item
                 # This is a line item with price (might be at any indent level)
                 quantity, price, item_name_raw = self.extract_price_and_quantity(line_stripped)
+                item_name = self.clean_item_name(item_name_raw)
                 
-                # Check if this is a blacklisted group header (like "Buy One Get One")
-                if self.is_blacklisted(line_stripped):
-                    # It's a promotion/group header - extract the sub-items
+                # Check if this is a blacklisted group header OR if the extracted item name is blacklisted
+                if self.is_blacklisted(line_stripped) or self.is_blacklisted(item_name):
+                    # It's a promotion/group header or non-food item - extract the sub-items if any
                     logger.info(f"  📦 Found group header (blacklisted): {line_stripped[:50]}")
                     price_str = f"${price:.2f}" if price is not None else "No price"
                     logger.debug(f"     Indent level: {indent_level}, Price: {price_str}")
@@ -980,7 +1033,7 @@ class IntelligentReceiptParser:
                     
                 else:
                     # It's a regular item with price (not blacklisted)
-                    item_name = self.clean_item_name(item_name_raw)
+                    # item_name was already extracted above
                     
                     # Validate price before adding item
                     if not price or price <= 0:
@@ -988,7 +1041,8 @@ class IntelligentReceiptParser:
                         i += 1
                         continue
                     
-                    if item_name and self.is_likely_food_item(item_name) and len(item_name) >= 3:
+                    # Double-check that this item name is not blacklisted and is likely food
+                    if item_name and len(item_name) >= 3 and not self.is_blacklisted(item_name) and self.is_likely_food_item(item_name):
                         item_key = f"{item_name}_{price}"
                         if item_key not in seen_items:
                             items.append({

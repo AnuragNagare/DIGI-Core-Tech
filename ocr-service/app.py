@@ -145,7 +145,7 @@ async def process_ocr(file: UploadFile = File(...), lang: str = "en"):
                 "confidence": parsed_data.get('confidence'),
                 "formattedDisplay": formatted_display,
                 "detected_language": lang,
-                "ocrEngine": ocr_result.get('ocr_engine', 'unknown'),  # Which OCR engine was used
+                "ocr_engine": ocr_result.get('ocr_engine', 'unknown'),  # Which OCR engine was used
                 "ocrConfidence": ocr_result.get('confidence', None),  # OCR confidence score
                 "rawResult": ocr_result,
                 "textRegions": ocr_result.get('text_regions', []),
@@ -153,7 +153,7 @@ async def process_ocr(file: UploadFile = File(...), lang: str = "en"):
                     "textLength": len(ocr_result.get('text', '')),
                     "itemCount": len(parsed_data.get('items', [])),
                     "confidenceScore": parsed_data.get('confidence', 0.0),
-                    "ocrEngine": ocr_result.get('ocr_engine', 'unknown')
+                    "ocr_engine": ocr_result.get('ocr_engine', 'unknown')
                 }
             }
         else:
@@ -162,7 +162,8 @@ async def process_ocr(file: UploadFile = File(...), lang: str = "en"):
                 "error": ocr_result.get('error', 'OCR processing failed'),
                 "text": "",
                 "items": [],
-                "confidence": 0.0
+                "confidence": 0.0,
+                "ocr_engine": ocr_result.get('ocr_engine', 'error')
             }
             
     except Exception as e:
@@ -170,7 +171,8 @@ async def process_ocr(file: UploadFile = File(...), lang: str = "en"):
             "success": False,
             "error": f"OCR processing failed: {str(e)}",
             "text": "",
-            "items": []
+            "items": [],
+            "ocr_engine": "error"
         }
 
 @app.get("/health")
@@ -241,4 +243,8 @@ async def test_ocr():
 if __name__ == "__main__":
     import uvicorn
     # Enable auto-reload for development to pick up code changes
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    # When using reload=True, uvicorn expects the application as an import string
+    # to spawn a separate reload process correctly. Passing the app object here
+    # triggers a warning. Use the import string 'app:app' so running
+    # `python app.py` works without the reload warning.
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

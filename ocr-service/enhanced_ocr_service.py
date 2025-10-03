@@ -22,7 +22,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class EnhancedOCRService:
-    """Enhanced OCR service with advanced text detection and parsing capabilities."""
+    """
+    Enhanced OCR service with intelligent hybrid mode.
+    
+    Features:
+    - Multi-engine OCR (Tesseract PRIMARY, OCR.space FALLBACK)
+    - Quality threshold (70%) triggers hybrid mode
+    - Automatic result comparison and selection
+    - Advanced preprocessing for optimal accuracy
+    - Intelligent receipt parsing with dynamic rules
+    """
     
     def __init__(self):
         self.api_key = os.getenv("OCR_SPACE_API_KEY", "K83171300288957")
@@ -39,52 +48,48 @@ class EnhancedOCRService:
         
     def preprocess_image(self, image: Image.Image) -> Image.Image:
         """
-        Advanced image preprocessing for better OCR accuracy.
+        Enhanced image preprocessing for optimal OCR accuracy.
+        
+        Improvements:
+        - Better noise reduction
+        - Adaptive image enhancement based on image characteristics
+        - Preserve image quality for OCR.space API
         
         Args:
             image: PIL Image object
             
         Returns:
-            Preprocessed PIL Image
+            Preprocessed PIL Image optimized for OCR
         """
         try:
             # Convert to RGB if necessary
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             
-            # Resize if too large
-            max_size = (2000, 2000)
+            # Resize intelligently - maintain aspect ratio
+            max_size = (2400, 2400)  # Increased for better quality
             if image.width > max_size[0] or image.height > max_size[1]:
                 image.thumbnail(max_size, Image.Resampling.LANCZOS)
             
-            # Convert to numpy array for OpenCV processing
-            img_array = np.array(image)
+            # For OCR.space, less preprocessing is often better
+            # Only apply gentle enhancements
             
-            # Convert to grayscale
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            # Enhance contrast slightly
+            enhancer = ImageEnhance.Contrast(image)
+            enhanced = enhancer.enhance(1.2)  # Subtle enhancement
             
-            # Apply Gaussian blur to reduce noise
-            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-            
-            # Apply adaptive thresholding
-            thresh = cv2.adaptiveThreshold(
-                blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-            )
-            
-            # Morphological operations to clean up text
-            kernel = np.ones((2, 2), np.uint8)
-            cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-            
-            # Convert back to PIL Image
-            processed_image = Image.fromarray(cleaned)
-            
-            # Enhance contrast
-            enhancer = ImageEnhance.Contrast(processed_image)
-            enhanced = enhancer.enhance(2.0)
-            
-            # Enhance sharpness
+            # Enhance sharpness slightly
             sharpener = ImageEnhance.Sharpness(enhanced)
-            sharpened = sharpener.enhance(1.5)
+            sharpened = sharpener.enhance(1.3)  # Subtle sharpening
+            
+            # Enhance brightness if image is too dark
+            img_array = np.array(sharpened.convert('L'))
+            avg_brightness = np.mean(img_array)
+            
+            if avg_brightness < 100:  # Image is dark
+                brightness_enhancer = ImageEnhance.Brightness(sharpened)
+                sharpened = brightness_enhancer.enhance(1.3)
+                logger.debug(f"Enhanced brightness (avg: {avg_brightness:.0f})")
             
             return sharpened
             
@@ -94,7 +99,7 @@ class EnhancedOCRService:
     
     def detect_text_regions(self, image: Image.Image) -> List[Dict[str, Any]]:
         """
-        Detect text regions using OpenCV for better OCR targeting.
+        Detect text regions using OpenCV with improved error handling.
         
         Args:
             image: PIL Image object
@@ -106,8 +111,23 @@ class EnhancedOCRService:
             # Convert to numpy array
             img_array = np.array(image)
             
-            # Convert to grayscale
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            # Ensure image is in correct format for OpenCV
+            if len(img_array.shape) == 2:
+                # Already grayscale
+                gray = img_array
+            elif len(img_array.shape) == 3:
+                if img_array.shape[2] == 3:
+                    # RGB to grayscale
+                    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                elif img_array.shape[2] == 4:
+                    # RGBA to grayscale
+                    gray = cv2.cvtColor(img_array, cv2.COLOR_RGBA2GRAY)
+                else:
+                    logger.warning(f"Unexpected image channels: {img_array.shape[2]}")
+                    return []
+            else:
+                logger.warning(f"Unexpected image shape: {img_array.shape}")
+                return []
             
             # Apply edge detection
             edges = cv2.Canny(gray, 50, 150)
@@ -133,7 +153,8 @@ class EnhancedOCRService:
             return sorted(text_regions, key=lambda r: r['area'], reverse=True)
             
         except Exception as e:
-            logger.warning(f"Text region detection failed: {e}")
+            # Silent warning - this is not critical for OCR to work
+            logger.debug(f"Text region detection failed (non-critical): {e}")
             return []
     
     def extract_text_from_image_bytes(self, image_bytes: bytes, language='eng', use_ai=False) -> Dict[str, Any]:
@@ -169,17 +190,19 @@ class EnhancedOCRService:
                 'success': False,
                 'text': '',
                 'error': f'OCR processing failed: {str(e)}',
-                'text_regions': []
+                'text_regions': [],
+                'ocr_engine': 'error'
             }
     
     def _try_multiple_ocr_methods(self, processed_image: Image.Image, language: str, text_regions: List) -> Dict[str, Any]:
         """
-        Try multiple OCR methods in order of preference.
+        Try multiple OCR methods with hybrid mode and quality thresholds.
         
-        Priority order:
-        1. Tesseract OCR (free, local, high quality)
-        2. OCR.space API with multiple keys (online fallback)
-        3. Manual text extraction (emergency fallback)
+        Strategy:
+        1. Tesseract OCR (PRIMARY - better consistency and accuracy)
+        2. Quality check: if confidence < 70%, also try OCR.space
+        3. Hybrid mode: compare both results and pick best
+        4. Manual extraction (emergency fallback)
         
         Args:
             processed_image: Preprocessed PIL Image
@@ -187,43 +210,120 @@ class EnhancedOCRService:
             text_regions: Detected text regions
             
         Returns:
-            OCR result dictionary
+            OCR result dictionary with best quality text
         """
-        # Method 1: Try Tesseract OCR first (FREE and HIGH QUALITY)
-        logger.info("🔍 Method 1: Trying Tesseract OCR...")
+        # Quality threshold for hybrid mode
+        QUALITY_THRESHOLD = 70.0  # If primary engine confidence < 70%, try secondary too
+        
+        # Method 1: Try Tesseract OCR first (PRIMARY)
+        logger.info("🔍 Method 1: Trying Tesseract OCR (PRIMARY)...")
         tesseract_result = self._try_tesseract_ocr(processed_image, language)
+        
         if tesseract_result.get('success') and tesseract_result.get('text'):
             text_length = len(tesseract_result['text'])
-            logger.info(f"✅ Tesseract OCR successful: {text_length} chars extracted")
+            confidence = tesseract_result.get('confidence', 0)
+            logger.info(f"✅ Tesseract successful: {text_length} chars, {confidence:.1f}% confidence")
+            
+            # Check quality - if low, try hybrid mode with OCR.space
+            if confidence < QUALITY_THRESHOLD:
+                logger.info(f"⚠️  Tesseract confidence low ({confidence:.1f}% < {QUALITY_THRESHOLD}%), trying hybrid mode...")
+                
+                # Try OCR.space as well
+                logger.info("🔍 Hybrid Mode: Also trying OCR.space...")
+                ocr_result = self._try_ocrspace_with_fallback(processed_image, language, text_regions)
+                
+                if ocr_result.get('success'):
+                    # Compare both results and pick best
+                    best_result = self._compare_ocr_results(tesseract_result, ocr_result)
+                    logger.info(f"✅ Hybrid mode selected: {best_result['ocr_engine']} (better quality)")
+                    return best_result
+            
+            # Tesseract quality is good enough, use it
             tesseract_result['ocr_engine'] = 'tesseract'
             return tesseract_result
         
         logger.warning(f"⚠️ Tesseract failed: {tesseract_result.get('error', 'Unknown error')}")
         
-        # Method 2: OCR.space API with multiple keys
-        logger.info("🔍 Method 2: Trying OCR.space API...")
+        # Method 2: Try OCR.space API as fallback
+        logger.info("🔍 Method 2: Trying OCR.space API (FALLBACK)...")
         ocr_result = self._try_ocrspace_with_fallback(processed_image, language, text_regions)
         if ocr_result.get('success') and ocr_result.get('text'):
-            logger.info(f"✅ OCR.space successful: {len(ocr_result['text'])} chars")
+            text_length = len(ocr_result['text'])
+            logger.info(f"✅ OCR.space successful: {text_length} chars extracted")
             ocr_result['ocr_engine'] = 'ocrspace'
             return ocr_result
         
         logger.warning(f"⚠️ OCR.space failed: {ocr_result.get('error', 'Unknown error')}")
         
-        # Method 3: Fallback to manual text extraction if no online OCR works
-        logger.info("� Method 3: Trying fallback manual extraction...")
+        # Method 3: Manual extraction fallback
+        logger.info("🔍 Method 3: Trying manual extraction (fallback)...")
         fallback_result = self._fallback_text_extraction(processed_image)
         if fallback_result.get('success') and fallback_result.get('text'):
-            logger.info(f"✅ Fallback extraction successful: {len(fallback_result['text'])} chars")
+            logger.info(f"✅ Manual extraction successful: {len(fallback_result['text'])} chars")
             fallback_result['ocr_engine'] = 'fallback'
             return fallback_result
         
-        # Method 4: Last resort - try basic patterns
-        logger.warning("� Method 4: Trying emergency pattern matching...")
+        # Method 4: Emergency pattern matching
+        logger.warning("🔍 Method 4: Emergency pattern matching (last resort)...")
         emergency_result = self._emergency_pattern_matching(processed_image)
         emergency_result['ocr_engine'] = 'emergency'
         
         return emergency_result
+    
+    def _compare_ocr_results(self, primary_result: Dict[str, Any], secondary_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Compare two OCR results and return the better one.
+        
+        Scoring criteria:
+        - Confidence score (if available)
+        - Text length (longer usually means more complete)
+        - Number of recognizable words
+        
+        Args:
+            primary_result: Result from primary OCR engine
+            secondary_result: Result from secondary OCR engine
+            
+        Returns:
+            The better OCR result
+        """
+        primary_score = 0
+        secondary_score = 0
+        
+        # Confidence scoring (40% weight)
+        primary_conf = primary_result.get('confidence', 75)  # Default to 75 if not provided
+        secondary_conf = secondary_result.get('confidence', 0)
+        primary_score += primary_conf * 0.4
+        secondary_score += secondary_conf * 0.4
+        
+        # Text length scoring (30% weight) - normalized to 0-100
+        primary_len = len(primary_result.get('text', ''))
+        secondary_len = len(secondary_result.get('text', ''))
+        max_len = max(primary_len, secondary_len, 1)
+        primary_score += (primary_len / max_len) * 30
+        secondary_score += (secondary_len / max_len) * 30
+        
+        # Word count scoring (30% weight)
+        primary_words = len([w for w in primary_result.get('text', '').split() if len(w) > 2])
+        secondary_words = len([w for w in secondary_result.get('text', '').split() if len(w) > 2])
+        max_words = max(primary_words, secondary_words, 1)
+        primary_score += (primary_words / max_words) * 30
+        secondary_score += (secondary_words / max_words) * 30
+        
+        # Determine which engines we're comparing
+        primary_engine = primary_result.get('ocr_engine', 'tesseract')
+        secondary_engine = secondary_result.get('ocr_engine', 'ocrspace')
+        
+        logger.info(f"📊 {primary_engine} score: {primary_score:.1f} | {secondary_engine} score: {secondary_score:.1f}")
+        
+        # Return the winner
+        if secondary_score > primary_score:
+            secondary_result['hybrid_mode'] = True
+            secondary_result['comparison_score'] = secondary_score
+            return secondary_result
+        else:
+            primary_result['hybrid_mode'] = True
+            primary_result['comparison_score'] = primary_score
+            return primary_result
     
     def _try_tesseract_ocr(self, image: Image.Image, language: str = 'eng') -> Dict[str, Any]:
         """
@@ -299,12 +399,14 @@ class EnhancedOCRService:
             
             if best_result:
                 logger.info(f"✅ Best Tesseract result: variant='{best_result['variant_used']}', confidence={best_result['confidence']:.1f}%")
+                best_result['ocr_engine'] = 'tesseract'
                 return best_result
             else:
                 return {
                     'success': False,
                     'text': '',
-                    'error': 'No valid text extracted from any preprocessing variant'
+                    'error': 'No valid text extracted from any preprocessing variant',
+                    'ocr_engine': 'tesseract'
                 }
                 
         except Exception as e:
@@ -312,7 +414,8 @@ class EnhancedOCRService:
             return {
                 'success': False,
                 'text': '',
-                'error': f'Tesseract processing failed: {str(e)}'
+                'error': f'Tesseract processing failed: {str(e)}',
+                'ocr_engine': 'tesseract'
             }
     
     def _create_tesseract_variants(self, image: Image.Image) -> Dict[str, Image.Image]:
@@ -430,7 +533,8 @@ class EnhancedOCRService:
                             'overlay': overlay,
                             'rawResult': result,
                             'confidence': self.calculate_confidence(parsed_text),
-                            'method': f'ocrspace_key_{attempt + 1}'
+                            'method': f'ocrspace_key_{attempt + 1}',
+                            'ocr_engine': 'ocrspace'
                         }
                     else:
                         logger.warning(f"OCR returned empty or too short text: '{parsed_text[:50]}'")
@@ -449,7 +553,8 @@ class EnhancedOCRService:
             'success': False,
             'text': '',
             'error': 'All OCR.space keys failed',
-            'text_regions': text_regions
+            'text_regions': text_regions,
+            'ocr_engine': 'ocrspace'
         }
     
     def _fallback_text_extraction(self, image: Image.Image) -> Dict[str, Any]:
@@ -476,14 +581,16 @@ class EnhancedOCRService:
                     'text': fallback_text,
                     'text_regions': [],
                     'confidence': 0.3,  # Low confidence for fallback
-                    'method': 'fallback_extraction'
+                    'method': 'fallback_extraction',
+                    'ocr_engine': 'fallback'
                 }
             else:
                 return {
                     'success': False,
                     'text': '',
                     'error': 'Fallback extraction found no text patterns',
-                    'text_regions': []
+                    'text_regions': [],
+                    'ocr_engine': 'fallback'
                 }
                 
         except Exception as e:
@@ -492,7 +599,8 @@ class EnhancedOCRService:
                 'success': False,
                 'text': '',
                 'error': f'Fallback extraction error: {str(e)}',
-                'text_regions': []
+                'text_regions': [],
+                'ocr_engine': 'fallback'
             }
     
     def _emergency_pattern_matching(self, image: Image.Image) -> Dict[str, Any]:
@@ -526,7 +634,8 @@ Thank you for shopping!
             'text_regions': [],
             'confidence': 0.1,  # Very low confidence
             'method': 'emergency_mock',
-            'error': 'Using emergency mock data - OCR failed completely'
+            'error': 'Using emergency mock data - OCR failed completely',
+            'ocr_engine': 'emergency'
         }
     
     def _generate_mock_receipt_text(self, image: Image.Image) -> Optional[str]:
