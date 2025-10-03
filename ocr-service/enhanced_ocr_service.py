@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 import cv2
 import numpy as np
+from intelligent_receipt_parser import IntelligentReceiptParser
 
 # Configure logging for debugging
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +23,7 @@ class EnhancedOCRService:
     def __init__(self):
         self.api_key = os.getenv("OCR_SPACE_API_KEY", "K83171300288957")
         self.base_url = "https://api.ocr.space/parse/imageurl"
+        self.intelligent_parser = IntelligentReceiptParser()
         
     def preprocess_image(self, image: Image.Image) -> Image.Image:
         """
@@ -122,13 +124,14 @@ class EnhancedOCRService:
             logger.warning(f"Text region detection failed: {e}")
             return []
     
-    def extract_text_from_image_bytes(self, image_bytes: bytes, language='eng') -> Dict[str, Any]:
+    def extract_text_from_image_bytes(self, image_bytes: bytes, language='eng', use_ai=False) -> Dict[str, Any]:
         """
         Enhanced text extraction with preprocessing and multiple detection strategies.
         
         Args:
             image_bytes: Raw image bytes
             language: Language code for OCR
+            use_ai: Whether to use AI-based parsing (for future compatibility)
             
         Returns:
             Dictionary with extracted text and detailed metadata
@@ -238,12 +241,13 @@ class EnhancedOCRService:
         
         return min(confidence, 1.0)
     
-    def advanced_parse_receipt_text(self, text: str) -> Dict[str, Any]:
+    def advanced_parse_receipt_text(self, text: str, ai_items=None) -> Dict[str, Any]:
         """
         Advanced receipt parsing with multiple strategies and confidence scoring.
         
         Args:
             text: Raw OCR text from receipt
+            ai_items: Optional list of AI-extracted items (for compatibility)
             
         Returns:
             Dictionary with detailed parsed receipt data
@@ -263,58 +267,30 @@ class EnhancedOCRService:
         
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         
-        # Initialize results
+        # Use intelligent parser for item extraction
+        parsed_result = self.intelligent_parser.parse_receipt(text)
+        
+        # Extract items and totals from intelligent parser result
+        raw_items = parsed_result.get('items', [])
+        
+        # Convert items to expected format (add total field)
         items = []
-        total_amount = None
-        subtotal = None
-        tax = None
-        purchase_date = None
-        store_name = None
+        for item in raw_items:
+            items.append({
+                "name": item.get('name', ''),
+                "price": item.get('price', 0.0),
+                "quantity": item.get('quantity', 1.0),
+                "total": item.get('price', 0.0) * item.get('quantity', 1.0)
+            })
+        
+        total_amount = parsed_result.get('total', None)
+        subtotal = parsed_result.get('subtotal', None)
+        tax = parsed_result.get('tax', None)
+        
+        # Initialize other results  
+        purchase_date = parsed_result.get('date', None)
+        store_name = parsed_result.get('merchant_name', None)
         payment_method = None
-        
-        # Advanced item detection patterns
-        item_patterns = [
-            r'^(.*?)\s+(\d+(?:\.\d{1,2})?)\s*@?\s*\$?(\d+(?:\.\d{2}))',  # Item Qty Price
-            r'^(.*?)\s+\$?(\d+\.\d{2})',  # Item Price
-            r'^(.*?)\s+(\d+(?:\.\d{1,2})?)\s*x\s*\$?(\d+(?:\.\d{2}))',  # Item QtyxPrice
-        ]
-        
-        # Look for items
-        for line in lines:
-            line = line.strip()
-            if not line or len(line) < 3:
-                continue
-            
-            for pattern in item_patterns:
-                match = re.search(pattern, line, re.IGNORECASE)
-                if match:
-                    groups = match.groups()
-                    if len(groups) == 3:
-                        # Item with quantity and price
-                        item_name = groups[0].strip()
-                        quantity = float(groups[1])
-                        price = float(groups[2])
-                        
-                        if 'total' not in item_name.lower() and price < 1000:
-                            items.append({
-                                "name": item_name,
-                                "price": price,
-                                "quantity": quantity,
-                                "total": quantity * price
-                            })
-                    elif len(groups) == 2:
-                        # Simple item with price
-                        item_name = groups[0].strip()
-                        price = float(groups[1])
-                        
-                        if 'total' not in item_name.lower() and price < 1000:
-                            items.append({
-                                "name": item_name,
-                                "price": price,
-                                "quantity": 1,
-                                "total": price
-                            })
-                    break
         
         # Advanced total detection
         total_patterns = [
@@ -383,8 +359,13 @@ class EnhancedOCRService:
                     payment_method = match.group(1) if match.group(1) else match.group(0)
                     break
         
-        # Calculate confidence based on parsed data
-        confidence = self.calculate_parsing_confidence(items, total_amount, subtotal, tax)
+        # Calculate confidence based on parsed data (handle None values)
+        confidence = self.calculate_parsing_confidence(
+            items, 
+            total_amount or 0.0, 
+            subtotal or 0.0, 
+            tax or 0.0
+        )
         
         return {
             "items": items,
