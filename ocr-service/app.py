@@ -145,12 +145,15 @@ async def process_ocr(file: UploadFile = File(...), lang: str = "en"):
                 "confidence": parsed_data.get('confidence'),
                 "formattedDisplay": formatted_display,
                 "detected_language": lang,
+                "ocrEngine": ocr_result.get('ocr_engine', 'unknown'),  # Which OCR engine was used
+                "ocrConfidence": ocr_result.get('confidence', None),  # OCR confidence score
                 "rawResult": ocr_result,
                 "textRegions": ocr_result.get('text_regions', []),
                 "processingStats": {
                     "textLength": len(ocr_result.get('text', '')),
                     "itemCount": len(parsed_data.get('items', [])),
-                    "confidenceScore": parsed_data.get('confidence', 0.0)
+                    "confidenceScore": parsed_data.get('confidence', 0.0),
+                    "ocrEngine": ocr_result.get('ocr_engine', 'unknown')
                 }
             }
         else:

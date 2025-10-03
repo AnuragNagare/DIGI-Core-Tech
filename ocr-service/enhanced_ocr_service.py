@@ -11,7 +11,11 @@ import json
 from datetime import datetime
 import cv2
 import numpy as np
+import pytesseract
 from intelligent_receipt_parser import IntelligentReceiptParser
+
+# Set Tesseract path for Windows
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # Configure logging for debugging
 logging.basicConfig(level=logging.INFO)
@@ -172,6 +176,11 @@ class EnhancedOCRService:
         """
         Try multiple OCR methods in order of preference.
         
+        Priority order:
+        1. Tesseract OCR (free, local, high quality)
+        2. OCR.space API with multiple keys (online fallback)
+        3. Manual text extraction (emergency fallback)
+        
         Args:
             processed_image: Preprocessed PIL Image
             language: Language code
@@ -180,26 +189,193 @@ class EnhancedOCRService:
         Returns:
             OCR result dictionary
         """
-        # Method 1: OCR.space API with multiple keys
+        # Method 1: Try Tesseract OCR first (FREE and HIGH QUALITY)
+        logger.info("🔍 Method 1: Trying Tesseract OCR...")
+        tesseract_result = self._try_tesseract_ocr(processed_image, language)
+        if tesseract_result.get('success') and tesseract_result.get('text'):
+            text_length = len(tesseract_result['text'])
+            logger.info(f"✅ Tesseract OCR successful: {text_length} chars extracted")
+            tesseract_result['ocr_engine'] = 'tesseract'
+            return tesseract_result
+        
+        logger.warning(f"⚠️ Tesseract failed: {tesseract_result.get('error', 'Unknown error')}")
+        
+        # Method 2: OCR.space API with multiple keys
+        logger.info("🔍 Method 2: Trying OCR.space API...")
         ocr_result = self._try_ocrspace_with_fallback(processed_image, language, text_regions)
         if ocr_result.get('success') and ocr_result.get('text'):
             logger.info(f"✅ OCR.space successful: {len(ocr_result['text'])} chars")
+            ocr_result['ocr_engine'] = 'ocrspace'
             return ocr_result
         
-        logger.warning(f"OCR.space failed: {ocr_result.get('error', 'Unknown error')}")
+        logger.warning(f"⚠️ OCR.space failed: {ocr_result.get('error', 'Unknown error')}")
         
-        # Method 2: Fallback to manual text extraction if no online OCR works
-        logger.info("🔄 Trying fallback manual extraction...")
+        # Method 3: Fallback to manual text extraction if no online OCR works
+        logger.info("� Method 3: Trying fallback manual extraction...")
         fallback_result = self._fallback_text_extraction(processed_image)
         if fallback_result.get('success') and fallback_result.get('text'):
             logger.info(f"✅ Fallback extraction successful: {len(fallback_result['text'])} chars")
+            fallback_result['ocr_engine'] = 'fallback'
             return fallback_result
         
-        # Method 3: Last resort - try basic patterns
-        logger.warning("🔄 Trying emergency pattern matching...")
+        # Method 4: Last resort - try basic patterns
+        logger.warning("� Method 4: Trying emergency pattern matching...")
         emergency_result = self._emergency_pattern_matching(processed_image)
+        emergency_result['ocr_engine'] = 'emergency'
         
         return emergency_result
+    
+    def _try_tesseract_ocr(self, image: Image.Image, language: str = 'eng') -> Dict[str, Any]:
+        """
+        Extract text using Tesseract OCR with advanced preprocessing.
+        
+        Tesseract is FREE, runs locally, and provides excellent accuracy
+        for receipt images with proper preprocessing.
+        
+        Args:
+            image: PIL Image object
+            language: Language code (default: 'eng' for English)
+            
+        Returns:
+            Dictionary with extracted text and metadata
+        """
+        try:
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Create multiple preprocessing variants for best results
+            preprocessed_variants = self._create_tesseract_variants(image)
+            
+            best_result = None
+            best_score = 0
+            
+            # Try each preprocessing variant and pick best result
+            for variant_name, variant_image in preprocessed_variants.items():
+                try:
+                    # Extract text with Tesseract
+                    # PSM 6: Assume uniform block of text (good for receipts)
+                    # OEM 3: Default, based on what is available (LSTM + Legacy)
+                    custom_config = r'--oem 3 --psm 6'
+                    
+                    extracted_text = pytesseract.image_to_string(
+                        variant_image,
+                        lang=language,
+                        config=custom_config
+                    )
+                    
+                    # Also get confidence data
+                    data = pytesseract.image_to_data(
+                        variant_image,
+                        lang=language,
+                        config=custom_config,
+                        output_type=pytesseract.Output.DICT
+                    )
+                    
+                    # Calculate average confidence
+                    confidences = [int(conf) for conf in data['conf'] if conf != '-1']
+                    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                    
+                    # Score this result
+                    text_length = len(extracted_text.strip())
+                    score = (avg_confidence * 0.7) + (min(text_length / 10, 30) * 0.3)
+                    
+                    logger.info(f"  Tesseract variant '{variant_name}': {text_length} chars, {avg_confidence:.1f}% confidence, score={score:.1f}")
+                    
+                    if score > best_score and text_length > 20:  # Minimum 20 chars
+                        best_score = score
+                        best_result = {
+                            'success': True,
+                            'text': extracted_text.strip(),
+                            'confidence': avg_confidence,
+                            'variant_used': variant_name,
+                            'text_length': text_length,
+                            'ocr_data': data
+                        }
+                
+                except Exception as variant_error:
+                    logger.warning(f"  Variant '{variant_name}' failed: {variant_error}")
+                    continue
+            
+            if best_result:
+                logger.info(f"✅ Best Tesseract result: variant='{best_result['variant_used']}', confidence={best_result['confidence']:.1f}%")
+                return best_result
+            else:
+                return {
+                    'success': False,
+                    'text': '',
+                    'error': 'No valid text extracted from any preprocessing variant'
+                }
+                
+        except Exception as e:
+            logger.error(f"Tesseract OCR error: {e}")
+            return {
+                'success': False,
+                'text': '',
+                'error': f'Tesseract processing failed: {str(e)}'
+            }
+    
+    def _create_tesseract_variants(self, image: Image.Image) -> Dict[str, Image.Image]:
+        """
+        Create multiple preprocessing variants optimized for Tesseract.
+        
+        Different receipts benefit from different preprocessing strategies.
+        We try multiple approaches and select the best result.
+        
+        Args:
+            image: Original PIL Image
+            
+        Returns:
+            Dictionary of variant_name -> preprocessed_image
+        """
+        variants = {}
+        
+        try:
+            # Variant 1: High contrast grayscale with adaptive thresholding
+            img_array = np.array(image.convert('L'))  # Convert to grayscale
+            
+            # Apply bilateral filter to reduce noise while preserving edges
+            bilateral = cv2.bilateralFilter(img_array, 9, 75, 75)
+            
+            # Adaptive thresholding
+            adaptive = cv2.adaptiveThreshold(
+                bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+            )
+            variants['adaptive_threshold'] = Image.fromarray(adaptive)
+            
+            # Variant 2: Otsu's thresholding (automatic threshold calculation)
+            blur = cv2.GaussianBlur(img_array, (5, 5), 0)
+            _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            variants['otsu_threshold'] = Image.fromarray(otsu)
+            
+            # Variant 3: Enhanced contrast + sharpening
+            pil_gray = image.convert('L')
+            
+            # Increase contrast
+            contrast_enhancer = ImageEnhance.Contrast(pil_gray)
+            high_contrast = contrast_enhancer.enhance(2.5)
+            
+            # Sharpen
+            sharpener = ImageEnhance.Sharpness(high_contrast)
+            sharpened = sharpener.enhance(2.0)
+            
+            variants['high_contrast_sharp'] = sharpened
+            
+            # Variant 4: Morphological operations to clean text
+            kernel = np.ones((2, 2), np.uint8)
+            morph = cv2.morphologyEx(adaptive, cv2.MORPH_CLOSE, kernel)
+            variants['morphological'] = Image.fromarray(morph)
+            
+            # Variant 5: Simple grayscale (sometimes works best for clean receipts)
+            variants['simple_grayscale'] = image.convert('L')
+            
+            logger.info(f"  Created {len(variants)} preprocessing variants for Tesseract")
+            
+        except Exception as e:
+            logger.warning(f"Error creating variants: {e}, using original image")
+            variants['original'] = image.convert('L')
+        
+        return variants
     
     def _try_ocrspace_with_fallback(self, processed_image: Image.Image, language: str, text_regions: List) -> Dict[str, Any]:
         """Try OCR.space with multiple API keys."""
