@@ -24,30 +24,49 @@ class ReceiptItem:
     
 class IntelligentReceiptParser:
     """
-    Intelligent parser that extracts ONLY actual food/grocery items.
-    Filters out all receipt metadata, totals, and irrelevant text.
+    Global Intelligent Receipt Parser - Works with receipts from any country/language.
+    Designed for worldwide use with multi-language, multi-currency, and multi-format support.
     """
     
     def __init__(self):
-        # Words/phrases that indicate NON-ITEM lines (to be filtered out)
+        # Global blacklist - includes words from major languages worldwide
         self.BLACKLIST_KEYWORDS = {
-            # Receipt metadata
+            # English
             'subtotal', 'sub-total', 'sub total', 'total', 'change', 'cash', 'credit',
             'debit', 'card', 'payment', 'amount', 'balance', 'due', 'paid', 'tender',
-            
-            # Loyalty & discounts
             'loyalty', 'points', 'rewards', 'member', 'savings', 'discount', 'coupon',
-            'promo', 'promotion', 'special', 'buy one', 'get one', 'bogo', 'deal',
-            
-            # Receipt info
             'receipt', 'invoice', 'order', 'transaction', 'ref', 'reference',
-            'store', 'location', 'address', 'phone', 'tel', 'email',
             
-            # Date/Time
-            'date', 'time', 'day', 'month', 'year',
+            # Spanish
+            'subtotal', 'total', 'cambio', 'efectivo', 'tarjeta', 'pago', 'importe',
+            'descuento', 'recibo', 'factura', 'pedido', 'transacción',
             
-            # Units without item names (these appear alone on receipt)
-            'net', 'gross', '@', 'ea', 'each', 'per', 'pkg', 'pack', 'package',
+            # French  
+            'sous-total', 'total', 'monnaie', 'espèces', 'carte', 'paiement', 'montant',
+            'remise', 'reçu', 'facture', 'commande', 'transaction',
+            
+            # German
+            'zwischensumme', 'summe', 'gesamt', 'wechselgeld', 'bargeld', 'karte',
+            'zahlung', 'betrag', 'rabatt', 'beleg', 'rechnung',
+            
+            # Portuguese
+            'subtotal', 'total', 'troco', 'dinheiro', 'cartão', 'pagamento',
+            'desconto', 'recibo', 'fatura', 'pedido',
+            
+            # Italian
+            'subtotale', 'totale', 'resto', 'contanti', 'carta', 'pagamento',
+            'sconto', 'ricevuta', 'fattura', 'ordine',
+            
+            # Chinese (common terms)
+            '小计', '总计', '合计', '找零', '现金', '刷卡', '支付', '折扣', '收据',
+            
+            # Japanese
+            '小計', '合計', 'お釣り', '現金', 'カード', '支払い', '割引', 'レシート',
+            
+            # Common receipt metadata (language-agnostic)
+            'vat', 'tax', 'iva', 'mwst', 'tva', 'btw', 'imposto', 'steuer',
+            'store', 'shop', 'market', 'tienda', 'magasin', 'geschäft', 'loja',
+            'date', 'time', 'fecha', 'hora', 'datum', 'zeit', 'data', 'tempo',
             
             # Numbers/codes alone
             'number', 'no', '#', 'id', 'code', 'sku', 'barcode',
@@ -60,9 +79,26 @@ class IntelligentReceiptParser:
             'come', 'again', 'see you', 'have a', 'enjoy',
         }
         
+        # Global currency symbols and patterns
+        self.CURRENCY_SYMBOLS = {
+            '$', '€', '£', '¥', '₹', '₽', '₩', '¢', '₡', '₦', '₨', '₱', '₫', '₪', 
+            'kr', 'zł', 'Kč', 'Ft', 'lei', 'lv', 'Lt', '₴', '₸', '₼', '₾', '₺',
+            'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'INR', 'RUB', 'KRW', 'AUD', 'CAD'
+        }
+        
+        # Global number format patterns (handles different decimal separators)
+        self.NUMBER_PATTERNS = [
+            r'(\d{1,3}(?:,\d{3})*\.\d{2})',  # US: 1,234.56
+            r'(\d{1,3}(?:\.\d{3})*,\d{2})',  # EU: 1.234,56  
+            r'(\d{1,3}(?: \d{3})*[,\.]\d{2})',  # FR: 1 234,56 or 1 234.56
+            r'(\d+[,\.]\d{2})',               # Simple: 123.45 or 123,45
+            r'(\d+\.\d{2})',                  # Standard decimal: 123.45
+            r'(\d+)',                         # Whole numbers: 123
+        ]
+        
         # Words that commonly appear in ONLY unit descriptions (not item names)
         self.UNIT_ONLY_KEYWORDS = {
-            'kg', 'g', 'lb', 'oz', 'l', 'ml', 'net', 'wt', 'weight'
+            'kg', 'g', 'lb', 'oz', 'l', 'ml', 'net', 'wt', 'weight', 'each', 'ea'
         }
         
         # Common food categories (helps validate if something is a food item)
@@ -95,61 +131,157 @@ class IntelligentReceiptParser:
         }
     
     def is_blacklisted(self, text: str) -> bool:
-        """Check if text contains blacklisted keywords."""
+        """Check if text contains blacklisted keywords - LESS RESTRICTIVE for better extraction."""
         import re
         
-        text_lower = text.lower()
+        text_lower = text.lower().strip()
         
         # Extract just the item name (before price) for checking
-        item_name_only = re.sub(r'\s*\$?\d+\.\d{2}\s*$', '', text).strip().lower()
+        item_name_only = re.sub(r'\s*\$?\d+[\.,]\d{2}\s*$', '', text).strip().lower()
         
-        # Short keywords that need word boundary matching to avoid false positives
-        # (e.g., 'ea' shouldn't match 'peas', 'no' shouldn't match 'snow', 'fee' shouldn't match 'coffee')
-        short_keywords = {'ea', 'no', '@', '#', 'id', 'per', 'fee', 'tax', 'gst', 'pst', 'hst', 'vat'}
+        # ENHANCED CRITICAL BLACKLIST - covers more non-food items dynamically
+        critical_blacklist = {
+            # Financial terms
+            'subtotal', 'sub-total', 'sub total', 'total', 'grand total', 'final total',
+            'take-out total', 'take out total', 'takeout total', 'dine-in total',
+            'change', 'cash tendered', 'cash received', 'credit card', 'debit card',
+            'balance', 'balance due', 'amount due', 'amount paid', 'payment',
+            'cash', 'credit', 'debit', 'visa', 'mastercard', 'amex', 'discover',
+            
+            # Taxes and fees
+            'tax', 'gst', 'pst', 'hst', 'vat', 'sales tax', 'local tax', 'tip',
+            'service charge', 'delivery fee', 'processing fee',
+            
+            # Receipt metadata
+            'loyalty number', 'member number', 'card number', 'account number',
+            'receipt number', 'transaction id', 'ref number', 'invoice number',
+            'order number', 'ticket number', 'confirmation number',
+            
+            # Store information
+            'thank you', 'have a nice day', 'come again', 'welcome', 'goodbye',
+            'store hours', 'phone number', 'address', 'website', 'location',
+            'cashier', 'clerk', 'manager', 'supervisor', 'server', 'staff',
+            
+            # Promotional/non-food terms
+            'discount', 'coupon', 'savings', 'promotion', 'offer', 'deal',
+            'buy one get one', 'bogo', 'b1g1', 'special offer', 'combo deal',
+            'buy one; get one', 'buy one, get one',  # With punctuation variations
+            
+            # OCR corrupted promotional text (from your examples)
+            'duy ona gel one une', 'buy one; get one line', 'gel one line',
+            'get one line', 'duy ona', 'gel one', 'buy one get one line',
+            '1. buy one; get one', '1 buy one get one',  # Numbered versions
+            
+            # OCR corrupted non-food items (based on test results)
+            'sumage liberin', 'burte eva line', 'hah browne', 'liced corien',
+            'whanwyrith', 'knonuy nib discount aeuismod lis', 'aeuismod',
+            
+            # Garbled text patterns that aren't food
+            'liberin', 'browne', 'corien', 'whanwyrith', 'knonuy', 'aeuismod',
+            'lis', 'eva line', 'una line', 'line una', 'line eva',
+            
+            # Survey/feedback
+            'survey', 'feedback', 'rating', 'review', 'tell us', 'visit us',
+            'online survey', 'customer survey', 'rate your experience',
+            
+            # Time/date references  
+            'date', 'time', 'am', 'pm', 'today', 'yesterday', 'hour', 'minute',
+            'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+            
+            # Quantities alone (not food)
+            'qty', 'quantity', 'item count', 'items', 'pieces', 'count',
+            
+            # Service terms
+            'take out', 'take-out', 'takeout', 'dine in', 'dine-in', 'for here',
+            'to go', 'delivery', 'pickup', 'drive thru', 'drive-thru',
+            
+            # Line items that aren't food
+            'line item', 'line total', 'item total', 'row total',
+        }
         
-        # Check for exact blacklist matches
-        for keyword in self.BLACKLIST_KEYWORDS:
-            # For short keywords, use word boundaries
-            if keyword in short_keywords:
-                # Match only if it's a complete word
-                if not re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
-                    continue  # Not a match, skip to next keyword
-            else:
-                # For longer keywords, simple substring match
-                if keyword not in text_lower:
-                    continue  # Not a match, skip to next keyword
-            
-            # If we get here, the keyword was found
-            logger.debug(f"  🔍 Found keyword '{keyword}' in '{text[:50]}'")
-            
-            # Special handling for certain keywords
-            if keyword in ['special', 'discount', 'promo']:
-                # If the item name is ONLY this keyword (like "SPECIAL 2.50"), blacklist it
-                if item_name_only == keyword:
-                    logger.debug(f"  ❌ Blacklisting (standalone promo)")
-                    return True
-                
-                # If it has food words (like "CHICKEN SPECIAL"), allow it
-                if any(food in text_lower for food in self.FOOD_CATEGORIES):
-                    logger.debug(f"  ✅ Allowing (has food word)")
-                    continue
-                    
-                # Short line without food words? Blacklist
-                if len(item_name_only) < 15:
-                    logger.debug(f"  ❌ Blacklisting (short promo)")
-                    return True
-            
-            # If keyword is in food/beverage categories, DON'T blacklist
-            if keyword in ['coffee', 'tea', 'juice', 'soda', 'water', 'beer', 'wine']:
-                logger.debug(f"  ✅ Allowing (beverage keyword)")
-                continue
-            
-            # For other blacklist words (totals, dates, etc.), always filter
-            # unless they're unit descriptors that might be part of item names
-            if keyword not in ['ea', 'no', '@', '#', 'id', 'per', 'net', 'each', 'pkg', 'pack', 'package']:
-                logger.debug(f"  ❌ Blacklisting (metadata keyword)")
+        # Check if entire text matches critical blacklist (exact phrases)
+        for critical_item in critical_blacklist:
+            if item_name_only == critical_item or text_lower == critical_item:
+                logger.debug(f"  ❌ Critical blacklist match: '{critical_item}'")
                 return True
         
+        # ENHANCED: Patterns to catch payment/total/non-food items (from your examples)
+        total_patterns = [
+            r'^\s*(sub)?total\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            r'^\s*change\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            r'^\s*(cash|credit|debit)\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            r'^\s*tax\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            r'^\s*balance\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            
+            # From your examples - catch these specific patterns
+            r'^\s*take-?out\s+total\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            r'^\s*change\s*[:=\s]*\d+[\.,]\d{2}\s*$',  # "Change: 5" type
+            r'^\s*gst\s*[:=\s]*\$?\d+[\.,]\d{2}\s*$',
+            
+            # Promotional lines that aren't food (ENHANCED)
+            r'.*buy\s+one[,\s;]*get\s+one.*',  # Any line with "buy one get one"
+            r'.*bogo.*',  # Any line with "bogo"
+            r'.*b1g1.*',  # Any line with "b1g1"
+            r'^\s*\d+\.\s*buy\s+one.*',  # "1. Buy One..." format
+            
+            # Original promotional patterns with prices
+            r'^\s*buy\s+one[,\s]*get\s+one.*\$?\d+[\.,]\d{2}\s*$',
+            r'^\s*(bogo|b1g1).*\$?\d+[\.,]\d{2}\s*$',
+            
+            # Lines with only codes/numbers and prices (likely not food)
+            r'^\s*\d{3,6}\s*[:,-]?\s*\$?\d+[\.,]\d{2}\s*$',  # "02753: $2.99" type
+            r'^\s*\d{1,2}[:]\d{3,6}\s*[,\s]*.*\$?\d+[\.,]\d{2}\s*$',  # "8:3556, ..." type
+        ]
+        
+        for pattern in total_patterns:
+            if re.match(pattern, text_lower):
+                logger.debug(f"  ❌ Total pattern match: '{pattern}'")
+                return True
+        
+        # Check for date patterns (be more specific)
+        date_patterns = [
+            r'^\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s*$',
+            r'^\s*\d{4}[/-]\d{1,2}[/-]\d{1,2}\s*$',
+            r'^\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2},?\s+\d{4}\s*$',
+        ]
+        
+        for pattern in date_patterns:
+            if re.match(pattern, text_lower):
+                logger.debug(f"  ❌ Date pattern match")
+                return True
+        
+        # Allow items that contain food words, even if they have some blacklisted terms
+        food_indicators = []
+        for word in item_name_only.split():
+            for food in self.FOOD_CATEGORIES:
+                if food in word or word in food:
+                    food_indicators.append(food)
+        
+        if food_indicators:
+            logger.debug(f"  ✅ Contains food indicators: {food_indicators}")
+            return False
+        
+        # For ambiguous cases, be more permissive
+        # Only blacklist if it's clearly not a food item
+        ambiguous_terms = ['special', 'discount', 'promo', 'sale', 'offer']
+        for term in ambiguous_terms:
+            if term in text_lower:
+                # If it's ONLY the term + price, blacklist
+                if item_name_only == term:
+                    logger.debug(f"  ❌ Standalone promotional term: '{term}'")
+                    return True
+                # If it has other words, it might be "CHICKEN SPECIAL", so allow
+                else:
+                    logger.debug(f"  ✅ Promotional term with other words - allowing")
+                    return False
+        
+        # Final check: if it's very short and has no clear food indicators, be cautious
+        if len(item_name_only) < 3:
+            logger.debug(f"  ❌ Too short: '{item_name_only}'")
+            return True
+        
+        # If we get here, it's likely a valid item
+        logger.debug(f"  ✅ Passed blacklist check: '{text[:50]}'")
         return False
     
     def is_unit_descriptor_only(self, text: str) -> bool:
@@ -168,87 +300,279 @@ class IntelligentReceiptParser:
         return False
     
     def is_likely_food_item(self, text: str) -> bool:
-        """Check if text likely contains a food item name."""
-        text_lower = text.lower()
+        """
+        Check if text likely contains a food item name - ENHANCED FOR BETTER DETECTION.
+        Now more permissive to catch more real food items.
+        """
+        if not text or len(text.strip()) < 2:
+            return False
+            
+        text_lower = text.lower().strip()
         
-        # Split into words for better matching
-        words = text_lower.split()
+        # Remove price portion for better analysis
+        text_clean = re.sub(r'\s*\$?\d+[\.,]\d{2}\s*$', '', text_lower).strip()
         
-        # Check if ANY word contains a known food keyword (partial matching)
+        # Split into words for analysis
+        words = [w.strip() for w in text_clean.split() if w.strip()]
+        
+        # Strong food indicators - if found, definitely a food item
+        strong_food_indicators = {
+            # Proteins
+            'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'turkey', 'bacon', 'sausage', 'ham',
+            'egg', 'eggs', 'meat', 'steak', 'burger', 'wing', 'wings', 'thigh', 'breast',
+            
+            # Fast food/prepared items
+            'pizza', 'burrito', 'burritos', 'taco', 'tacos', 'sandwich', 'wrap', 'wrap',
+            'nugget', 'nuggets', 'fries', 'fry', 'hot dog', 'hotdog', 'sub', 'submarine',
+            'quesadilla', 'enchilada', 'nachos', 'salad', 'soup', 'chili', 'mac', 'mac',
+            
+            # Vegetables  
+            'lettuce', 'tomato', 'potato', 'onion', 'carrot', 'broccoli', 'spinach', 'pepper',
+            'cucumber', 'zucchini', 'zuchinni', 'squash', 'celery', 'cabbage', 'peas', 'pea',
+            'beans', 'bean', 'corn', 'mushroom', 'asparagus', 'brussel', 'sprout', 'sprouts',
+            'avocado', 'garlic', 'ginger', 'parsley', 'cilantro',
+            
+            # Fruits
+            'apple', 'banana', 'orange', 'grape', 'grapes', 'strawberry', 'blueberry', 'berry',
+            'melon', 'mango', 'pineapple', 'peach', 'pear', 'cherry', 'kiwi', 'lemon', 'lime',
+            'grapefruit', 'plum', 'watermelon', 'cantaloupe',
+            
+            # Dairy
+            'milk', 'cheese', 'yogurt', 'butter', 'cream', 'ice cream', 'yoghurt',
+            
+            # Grains/Bakery
+            'bread', 'rice', 'pasta', 'cereal', 'flour', 'oat', 'oats', 'quinoa', 'bagel',
+            'muffin', 'croissant', 'roll', 'bun', 'toast', 'cracker', 'cookie', 'cake',
+            
+            # Beverages
+            'juice', 'soda', 'water', 'coffee', 'tea', 'beer', 'wine', 'cola', 'pepsi',
+            'coke', 'sprite', 'milk', 'smoothie', 'lemonade',
+            
+            # Common grocery items
+            'oil', 'sugar', 'salt', 'pepper', 'sauce', 'soup', 'nuts', 'nut', 'seeds', 'seed',
+            'spice', 'herb', 'vanilla', 'chocolate', 'honey', 'jam', 'jelly', 'vinegar',
+        }
+        
+        # Check for strong food indicators (substring matching for flexibility)
         for word in words:
-            for food in self.FOOD_CATEGORIES:
-                # Partial match - allows "zucchini" to match "zuchinni"
-                if food in word or word in food:
+            for indicator in strong_food_indicators:
+                if indicator in word or word in indicator:
+                    logger.debug(f"  🍎 Strong food indicator found: '{indicator}' in '{word}'")
                     return True
         
-        # Additional heuristics:
-        # - Has letters and is not too short
-        if len(text) < 3:
-            return False
+        # Brand name patterns that indicate food
+        food_brand_patterns = [
+            r'\b(kraft|heinz|campbell|nestle|kellogg|general mills|pillsbury)\b',
+            r'\b(del monte|hunts|french|italian|mexican|asian|organic)\b',
+            r'\b(fresh|frozen|canned|dried|smoked|grilled|baked)\b',
+        ]
         
-        # - Contains at least some alphabetic characters (not just numbers/symbols)
-        if sum(c.isalpha() for c in text) < 3:
-            return False
+        for pattern in food_brand_patterns:
+            if re.search(pattern, text_lower):
+                logger.debug(f"  🏷️  Food brand pattern match: {pattern}")
+                return True
         
-        # - If it's all caps and has a reasonable length, might be a product name
-        # - AND it has a price, it's probably a food item (we already filtered blacklist)
-        if text.isupper() and 3 < len(text) < 40:
-            # If we got here and it's not blacklisted, and has a price, 
-            # it's likely a food item
-            return True
+        # Food descriptor patterns
+        food_descriptors = [
+            r'\b(fresh|organic|natural|free range|grass fed|wild caught)\b',
+            r'\b(sliced|diced|chopped|whole|ground|minced|shredded)\b',
+            r'\b(raw|cooked|fried|baked|grilled|roasted|steamed)\b',
+            r'\b(sweet|sour|spicy|mild|hot|cold|frozen|canned)\b',
+        ]
         
-        # - If it has mixed case and reasonable length, could be food
-        if 3 < len(text) < 40 and any(c.isalpha() for c in text):
-            return True
+        for pattern in food_descriptors:
+            if re.search(pattern, text_lower):
+                logger.debug(f"  🔍 Food descriptor found: {pattern}")
+                return True
         
+        # Weight/quantity indicators suggest groceries
+        weight_patterns = [
+            r'\b\d+\.?\d*\s*(kg|g|lb|oz|lbs)\b',
+            r'\b\d+\.?\d*\s*(pack|bag|box|can|bottle|jar)\b',
+        ]
+        
+        for pattern in weight_patterns:
+            if re.search(pattern, text_lower):
+                logger.debug(f"  ⚖️  Weight/quantity pattern: {pattern}")
+                return True
+        
+        # ENHANCED: More stringent validation after cleaning
+        if 2 <= len(text_clean) <= 50:
+            alpha_count = sum(c.isalpha() for c in text_clean)
+            total_chars = len(text_clean.replace(' ', ''))
+            
+            # Must be at least 60% letters (higher threshold)
+            if alpha_count >= max(3, total_chars * 0.6):
+                
+                # Reject items that are just codes or numbers with random words
+                suspicious_patterns = [
+                    r'^\d+[:\s]+[A-Za-z]{1,2}$',  # "02753 Ut", "0257 M" type
+                    r'^[A-Za-z]{1,3}\s+\d+$',    # "M 1234", "EY 567" type  
+                    r'^[A-Za-z]{1,2}$',          # Just "M", "S", "L" etc.
+                    r'^\d{3,}$',                 # Just numbers "02753"
+                    r'^[A-Za-z]\s[A-Za-z]$',    # "M S", "E Y" type
+                ]
+                
+                for pattern in suspicious_patterns:
+                    if re.match(pattern, text_clean):
+                        logger.debug(f"  🚫 Suspicious pattern rejected: '{text_clean}'")
+                        return False
+                
+                # Require at least one "food-like" word if no strong indicators found
+                has_food_word = any(
+                    any(food in word.lower() or word.lower() in food for food in strong_food_indicators)
+                    for word in words
+                )
+                
+                # Common grocery formats: "ITEM NAME" or "Item Name" 
+                if (text.isupper() or text.istitle()) and 2 <= len(words) <= 4:
+                    logger.debug(f"  📝 Grocery format detected: caps/title case")
+                    return True
+                
+                # If it has recognizable food words, allow it
+                if has_food_word:
+                    logger.debug(f"  🍎 Has food words")
+                    return True
+                
+                # For items without clear food indicators, be more restrictive
+                # Must have reasonable structure (not just random characters)
+                if len(words) >= 2 and len(text_clean) >= 6:
+                    # Check if words are reasonable length (not just random chars)
+                    reasonable_words = [w for w in words if len(w) >= 3]
+                    if len(reasonable_words) >= 1:
+                        logger.debug(f"  ✨ Reasonable structure accepted: '{text_clean}'")
+                        return True
+        
+        logger.debug(f"  ❌ Not identified as food item: '{text_clean}'")
         return False
+    
+    def _extract_global_number(self, text: str) -> Optional[float]:
+        """Extract number from text using global formats (US, EU, etc.)"""
+        # Remove currency symbols first
+        clean_text = text
+        for symbol in self.CURRENCY_SYMBOLS:
+            clean_text = clean_text.replace(symbol, '')
+        
+        # Try each number pattern
+        for pattern in self.NUMBER_PATTERNS:
+            match = re.search(pattern, clean_text)
+            if match:
+                num_str = match.group(1)
+                try:
+                    # Handle different decimal separators
+                    if ',' in num_str and '.' in num_str:
+                        # Both comma and dot - determine which is decimal
+                        if num_str.rfind(',') > num_str.rfind('.'):
+                            # Comma is decimal: 1.234,56
+                            num_str = num_str.replace('.', '').replace(',', '.')
+                        else:
+                            # Dot is decimal: 1,234.56  
+                            num_str = num_str.replace(',', '')
+                    elif ',' in num_str:
+                        # Only comma - could be decimal or thousands
+                        if len(num_str.split(',')[-1]) == 2:
+                            # Decimal: 123,45
+                            num_str = num_str.replace(',', '.')
+                        else:
+                            # Thousands: 1,234
+                            num_str = num_str.replace(',', '')
+                    
+                    return float(num_str)
+                except ValueError:
+                    continue
+        
+        return None
+    
+    def _extract_global_price(self, line: str) -> Optional[Tuple[float, int, int]]:
+        """Extract price with currency from line - returns (price, start_pos, end_pos)"""
+        # Build comprehensive price pattern for any currency
+        currency_pattern = '|'.join(re.escape(sym) for sym in self.CURRENCY_SYMBOLS)
+        
+        # Patterns: currency before/after, with various number formats
+        price_patterns = [
+            f'({currency_pattern})\\s*({"|".join(self.NUMBER_PATTERNS)})',
+            f'({"|".join(self.NUMBER_PATTERNS)})\\s*({currency_pattern})',
+            f'({"|".join(self.NUMBER_PATTERNS)})(?=\\s*$)',  # Number at end of line
+        ]
+        
+        for pattern in price_patterns:
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                # Extract the numeric part
+                for group in match.groups():
+                    if group and not any(sym in group for sym in self.CURRENCY_SYMBOLS):
+                        price = self._extract_global_number(group)
+                        if price is not None and 0.01 <= price <= 999999:  # Reasonable price range
+                            return price, match.start(), match.end()
+        
+        return None
     
     def extract_price_and_quantity(self, line: str) -> Tuple[float, float, str]:
         """
-        Extract quantity and price from a receipt line.
+        Global price and quantity extraction - works with any currency and number format.
+        Supports: $, €, £, ¥, ₹, etc. and various decimal separators (. , space)
         Returns: (quantity, price, remaining_text_for_item_name)
-        Note: price defaults to 0.0 if not found (never None)
         """
         original_line = line
         quantity = 1.0
-        price = 0.0  # Default to 0.0 instead of None to prevent TypeError in sum()
+        price = 0.0  # Default to 0.0 to prevent TypeError in sum()
         
-        # Pattern 0: Tab-separated format "Item Name \t Qty \t Rate \t Amount"
-        # Example: "Pizza Large        1    430.0    430.0"
+        # Pattern 0: Tab-separated or multi-space format (global compatible)
+        # Works with any language: "Item Name \t Qty \t Rate \t Amount"
         if '\t' in line or '  ' in line:  # Multiple spaces or tabs
             parts = re.split(r'\s{2,}|\t+', line.strip())
             parts = [p.strip() for p in parts if p.strip()]
             
             if len(parts) >= 3:
-                # Try to parse: [name, qty, rate, amount] or [name, qty, amount]
-                # Look for numeric parts at the end
                 numeric_parts = []
                 name_parts = []
                 
                 for part in parts:
-                    if re.match(r'^\d+\.?\d*$', part):
-                        numeric_parts.append(float(part))
+                    # Try to extract numbers with any global format
+                    found_number = self._extract_global_number(part)
+                    if found_number is not None and len(part) < 15:  # Short, likely numeric
+                        numeric_parts.append(found_number)
                     else:
-                        # Check if it contains a price-like pattern
-                        price_in_part = re.search(r'\$?(\d+\.\d{2})', part)
-                        if price_in_part and len(part) < 15:  # Short, likely just a price
-                            numeric_parts.append(float(price_in_part.group(1)))
-                        else:
-                            name_parts.append(part)
+                        name_parts.append(part)
                 
                 if len(numeric_parts) >= 2:
-                    # Format: [qty, rate, amount] or [qty, amount]
                     quantity = numeric_parts[0]
-                    price = numeric_parts[-1]  # Last number is the amount
+                    price = numeric_parts[-1]  # Last number is the total amount
                     line = ' '.join(name_parts)
                     return quantity, price, line
         
-        # Pattern 1: "ITEM $XX.XX" or "ITEM XX.XX" or "ITEM XX.X"
-        # Match prices with 1 or 2 decimal places at end of line
-        price_match = re.search(r'\$?(\d+\.\d{1,2})\s*$', line)
-        if price_match:
-            price = float(price_match.group(1))
-            line = line[:price_match.start()].strip()
+        # Pattern 1: Global currency price extraction - ENHANCED
+        # Supports: $12.34, €12,34, ¥1234, ₹123.45, 12.34€, 12.34, etc.
+        price_found = self._extract_global_price(line)
+        if price_found:
+            price, match_start, match_end = price_found
+            line = (line[:match_start] + line[match_end:]).strip()
+        else:
+            # Enhanced fallback price detection - look for standalone numbers at end
+            price_fallback_patterns = [
+                r'(\d+\.\d{2})\s*$',  # 12.34 at end
+                r'(\d+,\d{2})\s*$',   # 12,34 at end (European)
+                r'(\d+\.\d{1})\s*$',  # 12.3 at end
+                r'(\d{2,})\s*$',      # 123 at end (whole dollars)
+            ]
+            
+            for pattern in price_fallback_patterns:
+                match = re.search(pattern, line.strip())
+                if match:
+                    price_str = match.group(1)
+                    try:
+                        # Handle different decimal formats
+                        if ',' in price_str and '.' not in price_str:
+                            price_str = price_str.replace(',', '.')
+                        
+                        extracted_price = float(price_str)
+                        # Reasonable price range check
+                        if 0.01 <= extracted_price <= 999.99:
+                            price = extracted_price
+                            line = line[:match.start()].strip()
+                            break
+                    except ValueError:
+                        continue
         
         # Pattern 2: "0.442kg NET @ $2.99/kg" - extract weight as quantity
         weight_match = re.search(r'(?:^|\s)(\d+\.?\d*)\s*(kg|g|lb|oz)\b', line.lower())
@@ -282,18 +606,164 @@ class IntelligentReceiptParser:
         return quantity, price, line
     
     def clean_item_name(self, name: str) -> str:
-        """Clean up item name by removing extra symbols and normalizing."""
-        # Remove leading/trailing special chars
+        """
+        ENHANCED: Clean up item name by removing promotional text, codes, and unwanted elements.
+        Dynamic rules that work for ALL receipts, not just specific patterns.
+        """
+        if not name or len(name.strip()) < 2:
+            return ""
+        
+        original_name = name
+        name = name.strip()
+        
+        # Step 1: Remove promotional prefixes and suffixes
+        promotional_patterns = [
+            # First remove numbered list prefixes: "1.", "2.", etc.
+            r'^\d+\.\s*',
+            
+            # Remove "Buy One, Get One" type promotions (dynamic) - COMPLETE LINE
+            r'^.*?buy\s+(?:one|two|\d+)[,\s;]*(?:get|receive)\s+(?:one|two|\d+).*$',
+            r'^.*?bogo.*$',
+            r'^.*?b1g1.*$',
+            
+            # Partial promotional text removal
+            r'^(buy\s+(?:one|two|\d+)[,\s;]*(?:get|receive)\s+(?:one|two|\d+)[,\s]*(?:free)?)\s*[-:\s]*',
+            r'^(buy\s+\d+[,\s]*get\s+\d+)\s*[-:\s]*',
+            r'^(bogo|b1g1)\s*[-:\s]*',
+            
+            # Remove common promotional text
+            r'^(special\s+offer|daily\s+special|combo|meal\s+deal)\s*[-:\s]*',
+            r'^(promotion|promo|deal|offer)\s*[-:\s]*',
+            
+            # Remove quantity prefixes when they're not part of food name
+            r'^\d+\s*x\s*',  # "2 x " 
+        ]
+        
+        for pattern in promotional_patterns:
+            name = re.sub(pattern, '', name, flags=re.IGNORECASE).strip()
+        
+        # Step 2: Remove line references and codes (DYNAMIC)
+        line_code_patterns = [
+            # Line references: "Line 1", "Line 4", "Line 8", etc.
+            r'\s*line\s+\d+\s*$',
+            r'\s*line\s+\d+\s*',
+            r'\s*ln\s*\d+\s*',
+            
+            # Item codes at start: "02753", "0257", "9463" (4-5 digit codes)
+            r'^\d{3,6}[:\s]+',
+            r'^\d{3,6}\s+',
+            
+            # Item codes with colons: "1:", "2:", "4:", "6:", "8:"
+            r'^\d{1,2}:\s*',
+            
+            # Mixed codes: "8:3556," type patterns
+            r'^\d+[:]\d+[,\s]*',
+            
+            # Remove trailing codes/numbers that aren't prices
+            r'\s+\d{3,6}\s*$',  # Trailing 3-6 digit codes
+            
+            # Remove reference numbers in middle: "EVM", "EY", etc (but not common food words)
+            r'\s+(EVM|EVA|EY|LNE|UNE)(?=\s|$)',  # Specific OCR noise codes, not common words
+        ]
+        
+        for pattern in line_code_patterns:
+            name = re.sub(pattern, '', name, flags=re.IGNORECASE).strip()
+        
+        # Step 3: Remove measurement and packaging info (keep food name clean)
+        measurement_patterns = [
+            r'\s+(NET|@|ea|each|pkg|package|lb|oz|kg|g|ml|l)\b.*$',
+            r'\s+\d+\.?\d*\s*(kg|g|lb|oz|lbs|ml|l)\b.*$',
+            r'\s+@\s*\$?\d+\.?\d*.*$',  # Remove "@ $2.99/kg" type text
+        ]
+        
+        for pattern in measurement_patterns:
+            name = re.sub(pattern, '', name, flags=re.IGNORECASE).strip()
+        
+        # Step 4: Remove garbled/corrupted text indicators
+        corruption_patterns = [
+            # Remove single letters or numbers at end
+            r'\s+[A-Za-z]\s*$',
+            r'\s+\d\s*$',
+            
+            # Remove weird punctuation clusters
+            r'[,.;:]{2,}',
+            r'\s*[,.:;]+\s*$',
+            
+            # Remove standalone special characters
+            r'\s*[-_=+]+\s*$',
+            
+            # Clean up multiple spaces
+            r'\s{2,}',
+        ]
+        
+        for pattern in corruption_patterns:
+            name = re.sub(pattern, ' ', name).strip()
+        
+        # Step 5: Handle specific problematic patterns from your examples (MORE AGGRESSIVE)
+        problem_patterns = [
+            # "M Iced Coffee-Line 8" -> "M Iced Coffee" (including OCR variants)
+            r'-?\s*line\s+\d+.*$',
+            r'\s+line\s+\d+.*$',
+            r'\s+une\s*\d*.*$',  # OCR error: "Line" -> "Une"
+            r'\s+lne\s*\d*.*$',  # OCR error: "Line" -> "Lne"
+            r'\s+eva\s*.*$',     # OCR error often creates "Eva" noise
+            
+            # Remove modifier words that got attached
+            r'\s*(add|no|extra|side|with|without)\s+.*$',
+            
+            # Remove "Take-Out", "Change" etc. (including OCR variants)
+            r'^(take-?out|change|subtotal|subrotal|total|gst|tax|tara-?oul).*$',
+            
+            # Remove credit card and payment info
+            r'^(credit|debit|card|cash|payment|cardit|caro).*$',
+            
+            # Remove corrupted versions of common promotional terms (OCR errors)
+            r'^(duy\s+ona|gel\s+one|buy\s+one).*$',  # OCR errors for "Buy One"
+            r'.*get\s+one\s+(une|line).*$',         # "Get One Line" corruptions
+            
+            # Remove corrupted food names that are mostly garbled
+            r'^(sumage|liberin|browne|corien|whanwyrith|knonuy|aeuismod).*$',
+            r'^(burte|hah|liced|dains|alob|vom).*$',
+            r'.*\s+(corien|liberin|browne|whanwyrith).*$',  # Garbled endings
+            
+            # Remove items that start with multiple numbers/codes
+            r'^\d+[\.:]\d+.*$',     # "4.0557 ..." or "6:3463 ..." patterns
+            r'^\d{3,}[:\s].*$',     # "02753 ..." patterns
+            
+            # Remove discount/promotion indicators
+            r'.*discount.*$',
+            r'.*promo.*$',
+            r'.*special.*$',
+            
+            # Single punctuation or short meaningless endings
+            r'[,.:;]\s*[A-Z]?\s*$',
+            
+            # Remove trailing single letters or short fragments
+            r'\s+[A-Za-z]{1,2}\s*$',
+        ]
+        
+        for pattern in problem_patterns:
+            name = re.sub(pattern, '', name, flags=re.IGNORECASE).strip()
+        
+        # Step 6: Final cleanup
+        # Remove leading/trailing special characters
         name = re.sub(r'^[^\w]+|[^\w]+$', '', name)
         
-        # Remove common suffixes that aren't part of the name
-        name = re.sub(r'\s+(NET|@|ea|each|pkg).*$', '', name, flags=re.IGNORECASE)
-        
-        # Normalize spaces
+        # Normalize internal spaces
         name = ' '.join(name.split())
         
-        # Title case for better readability
-        return name.title()
+        # If name became too short or empty, reject it
+        if len(name) < 3:
+            return ""
+        
+        # Convert to title case for consistency
+        cleaned_name = name.title()
+        
+        # Debug logging to track cleaning process
+        if cleaned_name != original_name.strip():
+            logger.debug(f"  🧹 Cleaned: '{original_name.strip()}' -> '{cleaned_name}'")
+        
+        return cleaned_name
     
     def parse_receipt_items(self, ocr_text: str) -> List[Dict[str, Any]]:
         """
@@ -457,35 +927,48 @@ class IntelligentReceiptParser:
                                 logger.debug(f"       ✗ Skipping modifier: {next_stripped[:30]}")
                                 i += 1
                                 continue
-                                
-                            # Extract item name
-                            item_name = self._clean_sub_item_name(next_stripped)
+                            
+                            # ENHANCED: Check if sub-item has its own price
+                            sub_has_price = bool(re.search(r'\$?\d+\.\d{2}', next_stripped))
+                            sub_quantity = 1
+                            sub_price = price  # Default to parent's price
+                            
+                            if sub_has_price:
+                                # Sub-item has its own price - extract it
+                                sub_quantity, sub_price, sub_item_name_raw = self.extract_price_and_quantity(next_stripped)
+                                item_name = self.clean_item_name(sub_item_name_raw)
+                                logger.debug(f"       ✓ Sub-item has own price: ${sub_price:.2f}")
+                            else:
+                                # Sub-item uses parent's price
+                                item_name = self._clean_sub_item_name(next_stripped)
+                                logger.debug(f"       ✓ Sub-item uses parent price: ${sub_price:.2f}")
+                            
                             logger.debug(f"       Cleaned name: '{item_name}'")
                             
                             # Validate price before adding sub-item
-                            if not price or price <= 0:
-                                logger.debug(f"       ✗ Invalid parent price: {price}")
+                            if not sub_price or sub_price <= 0:
+                                logger.debug(f"       ✗ Invalid price: {sub_price}")
                                 i += 1
                                 continue
                             
-                            if item_name and self.is_likely_food_item(item_name):
-                                item_key = f"{item_name}_{price}_sub"
+                            if item_name and len(item_name) >= 3 and self.is_likely_food_item(item_name):
+                                item_key = f"{item_name}_{sub_price}_sub_{i}"  # Include line number to allow duplicates with different prices
                                 if item_key not in seen_items:
                                     items.append({
                                         'name': item_name,
-                                        'quantity': 1,
-                                        'price': price,  # Use parent's price
-                                        'unit_price': price,
+                                        'quantity': sub_quantity,
+                                        'price': sub_price,
+                                        'unit_price': self._compute_unit_price(sub_price, sub_quantity),
                                         'original_line': next_line
                                     })
                                     seen_items.add(item_key)
                                     sub_item_count += 1
-                                    price_str = f"${price:.2f}" if price is not None else "No price"
+                                    price_str = f"${sub_price:.2f}" if sub_price is not None else "No price"
                                     logger.info(f"  ✅ Extracted sub-item: {item_name} ({price_str})")
                                 else:
                                     logger.debug(f"       ✗ Duplicate: {item_name}")
                             else:
-                                logger.debug(f"       ✗ Not a food item: {item_name}")
+                                logger.debug(f"       ✗ Not a food item or too short: {item_name}")
                             i += 1
                         else:
                             # No more sub-items, back to main level

@@ -854,7 +854,7 @@ export default function SmartGroceryApp() {
   const addInventoryItem = (item: Omit<InventoryItem, "id" | "daysLeft" | "addedDate">) => {
     const newItem: InventoryItem = {
       ...item,
-      id: Date.now().toString(),
+      id: `inv-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
       addedDate: format(new Date(), "yyyy-MM-dd"),
       daysLeft: differenceInDays(parseISO(item.expiryDate), new Date()),
     }
@@ -882,7 +882,7 @@ export default function SmartGroceryApp() {
   const addShoppingItem = (item: Omit<ShoppingItem, "id" | "addedDate">) => {
     const newItem: ShoppingItem = {
       ...item,
-      id: Date.now().toString(),
+      id: `shop-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
       addedDate: format(new Date(), "yyyy-MM-dd"),
     }
     setShoppingList((prev) => [...prev, newItem])
@@ -1040,7 +1040,7 @@ export default function SmartGroceryApp() {
     if (!member) return
 
     const newMealRecord: MealRecord = {
-      id: Date.now().toString(),
+      id: `meal-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
       memberId: selectedRecorderMember,
       memberName: member.name,
       mealName,

@@ -237,4 +237,5 @@ async def test_ocr():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Enable auto-reload for development to pick up code changes
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
