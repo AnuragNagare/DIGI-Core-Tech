@@ -1232,10 +1232,10 @@ export default function SmartGroceryApp() {
                 Scan Item
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="bg-white">
               <DialogHeader>
-                <DialogTitle>Scan Item</DialogTitle>
-                <DialogDescription>Scan barcode or add item manually</DialogDescription>
+                <DialogTitle className="text-gray-900">Scan Item</DialogTitle>
+                <DialogDescription className="text-gray-600">Scan barcode or add item manually</DialogDescription>
               </DialogHeader>
               <AddItemForm onAdd={addInventoryItem} />
             </DialogContent>
@@ -1489,10 +1489,10 @@ export default function SmartGroceryApp() {
                 Add Manual
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="bg-white">
               <DialogHeader>
-                <DialogTitle>Add Item Manually</DialogTitle>
-                <DialogDescription>Add a new item to your inventory</DialogDescription>
+                <DialogTitle className="text-gray-900">Add Item Manually</DialogTitle>
+                <DialogDescription className="text-gray-600">Add a new item to your inventory</DialogDescription>
               </DialogHeader>
               <AddItemForm onAdd={addInventoryItem} />
             </DialogContent>
@@ -1610,10 +1610,10 @@ export default function SmartGroceryApp() {
 
       {/* Inventory Management Dialog */}
       <Dialog open={showInventoryTable} onOpenChange={setShowInventoryTable}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto bg-white">
           <DialogHeader>
-            <DialogTitle>Inventory Management</DialogTitle>
-            <DialogDescription>Manage all your grocery items</DialogDescription>
+            <DialogTitle className="text-gray-900">Inventory Management</DialogTitle>
+            <DialogDescription className="text-gray-600">Manage all your grocery items</DialogDescription>
           </DialogHeader>
           <InventoryTable
             inventory={inventory}
@@ -1629,10 +1629,10 @@ export default function SmartGroceryApp() {
 
       {/* Meal Planner Dialog */}
       <Dialog open={showMealPlanner} onOpenChange={setShowMealPlanner}>
-        <DialogContent className="max-w-6xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl max-h-[80vh] overflow-y-auto bg-white">
           <DialogHeader>
-            <DialogTitle>Weekly Meal Planner</DialogTitle>
-            <DialogDescription>Plan your meals for the week</DialogDescription>
+            <DialogTitle className="text-gray-900">Weekly Meal Planner</DialogTitle>
+            <DialogDescription className="text-gray-600">Plan your meals for the week</DialogDescription>
           </DialogHeader>
           <MealPlanner
             mealPlans={mealPlans}
@@ -1645,10 +1645,10 @@ export default function SmartGroceryApp() {
 
       {/* Analytics Dialog */}
       <Dialog open={showAnalytics} onOpenChange={setShowAnalytics}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto bg-white">
           <DialogHeader>
-            <DialogTitle>Analytics & Insights</DialogTitle>
-            <DialogDescription>Track your grocery usage and waste reduction</DialogDescription>
+            <DialogTitle className="text-gray-900">Analytics & Insights</DialogTitle>
+            <DialogDescription className="text-gray-600">Track your grocery usage and waste reduction</DialogDescription>
           </DialogHeader>
           <AnalyticsDashboard inventory={inventory} recipes={recipes} mealPlans={mealPlans} />
         </DialogContent>
@@ -1656,10 +1656,10 @@ export default function SmartGroceryApp() {
 
       {/* Edit Item Dialog */}
       <Dialog open={!!selectedInventoryItem} onOpenChange={() => setSelectedInventoryItem(null)}>
-        <DialogContent>
+        <DialogContent className="bg-white">
           <DialogHeader>
-            <DialogTitle>Edit Item</DialogTitle>
-            <DialogDescription>Update item details</DialogDescription>
+            <DialogTitle className="text-gray-900">Edit Item</DialogTitle>
+            <DialogDescription className="text-gray-600">Update item details</DialogDescription>
           </DialogHeader>
           {selectedInventoryItem && (
             <EditItemForm
@@ -2159,7 +2159,7 @@ export default function SmartGroceryApp() {
 
         {/* Recipe Details Dialog */}
         <Dialog open={!!selectedRecipe} onOpenChange={() => setSelectedRecipe(null)}>
-          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto bg-white">
             {selectedRecipe && (
               <RecipeDetails
                 recipe={selectedRecipe}
@@ -2201,10 +2201,10 @@ export default function SmartGroceryApp() {
                     <Plus className="w-5 h-5" />
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="bg-white">
                   <DialogHeader>
-                    <DialogTitle>Add Shopping Item</DialogTitle>
-                    <DialogDescription>Add a new item to your shopping list</DialogDescription>
+                    <DialogTitle className="text-gray-900">Add Shopping Item</DialogTitle>
+                    <DialogDescription className="text-gray-600">Add a new item to your shopping list</DialogDescription>
                   </DialogHeader>
                   <AddShoppingItemForm onAdd={addShoppingItem} />
                 </DialogContent>
@@ -2423,10 +2423,10 @@ export default function SmartGroceryApp() {
               <Plus className="w-6 h-6" />
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="bg-white">
             <DialogHeader>
-              <DialogTitle>Quick Add</DialogTitle>
-              <DialogDescription>Add a new item to your inventory</DialogDescription>
+              <DialogTitle className="text-gray-900">Quick Add</DialogTitle>
+              <DialogDescription className="text-gray-600">Add a new item to your inventory</DialogDescription>
             </DialogHeader>
             <AddItemForm onAdd={addInventoryItem} />
           </DialogContent>
