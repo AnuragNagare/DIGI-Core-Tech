@@ -677,6 +677,11 @@ export default function SmartGroceryApp() {
   >(null)
 
   const [isUploading, setIsUploading] = useState(false)
+  
+  // New state for manual item selection
+  const [extractedItemsForSelection, setExtractedItemsForSelection] = useState<any[]>([])
+  const [selectedItemIndices, setSelectedItemIndices] = useState<Set<number>>(new Set())
+
 
   const handleReceiptUpload = async (file: File) => {
     if (!file) {
@@ -760,55 +765,48 @@ export default function SmartGroceryApp() {
         
         setReceiptResult(data)
         
-        // Process items after a short delay to show the parsed results first
-        setTimeout(() => {
-          try {
-            const items = data.items || []
-            let added = 0
-            
-            items.forEach((it: any) => {
-              if (!it?.name) return
-              
-              const { qty, unit } = parseQuantityUnit(it.quantity || "")
-              const normalizedUnit = normalizeUnit(it.unit || unit)
-              const category = guessCategory(it.name)
-              const baseDateStr = it.date || data.purchaseDate
-              const baseDate = baseDateStr ? (isNaN(Date.parse(baseDateStr)) ? new Date() : new Date(baseDateStr)) : new Date()
-              const expiryDays = categoryShelfLifeDays(category)
-              const expiryDate = format(addDays(baseDate, expiryDays), "yyyy-MM-dd")
-              
-              const newItem = {
-                name: it.name.trim(),
-                quantity: qty || "1",
-                unit: normalizedUnit || "unit",
-                category,
-                expiryDate,
-                notes: "Added from receipt OCR",
-              }
-              
-              console.log("Adding item to inventory:", newItem)
-              addInventoryItem(newItem)
-              added += 1
-            })
-            
-            if (added > 0) {
-              toast({
-                title: "Items Added",
-                description: `Successfully added ${added} items from receipt.`,
-                variant: "default",
-              })
-            } else {
-              throw new Error("No valid items found in the receipt")
-            }
-          } catch (processError) {
-            console.error("Error processing receipt items:", processError)
-            toast({
-              title: "Processing Error",
-              description: "Could not process all items from the receipt.",
-              variant: "destructive",
-            })
+        // Prepare items for manual selection instead of auto-adding
+        const items = data.items || []
+        const preparedItems = items.map((it: any) => {
+          if (!it?.name) return null
+          
+          const { qty, unit } = parseQuantityUnit(it.quantity || "")
+          const normalizedUnit = normalizeUnit(it.unit || unit)
+          const category = guessCategory(it.name)
+          const baseDateStr = it.date || data.purchaseDate
+          const baseDate = baseDateStr ? (isNaN(Date.parse(baseDateStr)) ? new Date() : new Date(baseDateStr)) : new Date()
+          const expiryDays = categoryShelfLifeDays(category)
+          const expiryDate = format(addDays(baseDate, expiryDays), "yyyy-MM-dd")
+          
+          return {
+            name: it.name.trim(),
+            quantity: qty || "1",
+            unit: normalizedUnit || "unit",
+            category,
+            expiryDate,
+            notes: "Extracted from receipt OCR",
+            originalItem: it
           }
-        }, 1000)
+        }).filter(Boolean)
+        
+        // Set items for user selection
+        setExtractedItemsForSelection(preparedItems)
+        // Select all items by default
+        setSelectedItemIndices(new Set(preparedItems.map((_: any, idx: number) => idx)))
+        
+        if (preparedItems.length > 0) {
+          toast({
+            title: "Items Extracted",
+            description: `Found ${preparedItems.length} items. Please review and select which ones to add.`,
+            variant: "default",
+          })
+        } else {
+          toast({
+            title: "No Items Found",
+            description: "Could not find any items in the receipt.",
+            variant: "destructive",
+          })
+        }
       } else {
         throw new Error("No data received from receipt processing")
       }
@@ -859,6 +857,62 @@ export default function SmartGroceryApp() {
       daysLeft: differenceInDays(parseISO(item.expiryDate), new Date()),
     }
     setInventory((prev) => [newItem, ...prev])
+  }
+  
+  // New function to add selected items from OCR
+  const addSelectedReceiptItems = () => {
+    let added = 0
+    
+    selectedItemIndices.forEach((idx) => {
+      const item = extractedItemsForSelection[idx]
+      if (item) {
+        const { originalItem, ...newItem } = item
+        addInventoryItem(newItem)
+        added += 1
+      }
+    })
+    
+    if (added > 0) {
+      toast({
+        title: "Items Added",
+        description: `Successfully added ${added} items to inventory.`,
+        variant: "default",
+      })
+      // Clear the selection
+      setExtractedItemsForSelection([])
+      setSelectedItemIndices(new Set())
+      setShowReceiptDialog(false)
+      setReceiptImage("")
+      setReceiptResult(null)
+    } else {
+      toast({
+        title: "No Items Selected",
+        description: "Please select at least one item to add.",
+        variant: "destructive",
+      })
+    }
+  }
+  
+  // Function to toggle item selection
+  const toggleItemSelection = (idx: number) => {
+    setSelectedItemIndices((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(idx)) {
+        newSet.delete(idx)
+      } else {
+        newSet.add(idx)
+      }
+      return newSet
+    })
+  }
+  
+  // Function to select/deselect all items
+  const toggleAllItems = () => {
+    if (selectedItemIndices.size === extractedItemsForSelection.length) {
+      setSelectedItemIndices(new Set())
+    } else {
+      setSelectedItemIndices(new Set(extractedItemsForSelection.map((_, idx) => idx)))
+    }
   }
 
   const updateInventoryItem = (id: string, updates: Partial<InventoryItem>) => {
@@ -1204,12 +1258,12 @@ export default function SmartGroceryApp() {
             <Camera className="w-5 h-5 mr-2" />
             Classify Food
           </Button>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Scan Receipt</DialogTitle>
-                <DialogDescription>Upload a photo of your receipt to extract items</DialogDescription>
+            <DialogContent className="max-w-lg bg-white">
+              <DialogHeader className="bg-white">
+                <DialogTitle className="text-gray-900">Scan Receipt</DialogTitle>
+                <DialogDescription className="text-gray-600">Upload a photo of your receipt to extract items</DialogDescription>
               </DialogHeader>
-              <div className="space-y-4">
+              <div className="space-y-4 bg-white">
                 <div className="relative">
                   <input
                     type="file"
@@ -1259,7 +1313,83 @@ export default function SmartGroceryApp() {
                     </div>
                   </div>
                 )}
-                {receiptResult && (
+                
+                {/* Manual Item Selection Interface */}
+                {extractedItemsForSelection.length > 0 && (
+                  <div className="space-y-4 bg-white p-4 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium text-gray-900">
+                        Select Items to Add ({selectedItemIndices.size}/{extractedItemsForSelection.length} selected)
+                      </h4>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={toggleAllItems}
+                        className="text-xs bg-white hover:bg-gray-50"
+                      >
+                        {selectedItemIndices.size === extractedItemsForSelection.length ? "Deselect All" : "Select All"}
+                      </Button>
+                    </div>
+                    
+                    <div className="max-h-48 overflow-auto space-y-2 border rounded-lg p-2 bg-gray-50">
+                      {extractedItemsForSelection.map((item, idx) => (
+                        <div 
+                          key={idx} 
+                          className={`flex items-start gap-3 p-3 rounded-lg border-2 transition-all cursor-pointer ${
+                            selectedItemIndices.has(idx) 
+                              ? 'border-green-500 bg-green-50' 
+                              : 'border-gray-200 bg-white hover:border-gray-300'
+                          }`}
+                          onClick={() => toggleItemSelection(idx)}
+                        >
+                          <Checkbox
+                            checked={selectedItemIndices.has(idx)}
+                            onCheckedChange={() => toggleItemSelection(idx)}
+                            className="mt-1"
+                          />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-gray-900">{item.name}</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Quantity: {item.quantity} {item.unit} • Category: {item.category}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              Expires: {item.expiryDate}
+                            </p>
+                          </div>
+                          {selectedItemIndices.has(idx) && (
+                            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <div className="flex gap-2 pt-2 border-t">
+                      <Button
+                        onClick={addSelectedReceiptItems}
+                        disabled={selectedItemIndices.size === 0}
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add {selectedItemIndices.size} Item{selectedItemIndices.size !== 1 ? 's' : ''} to Inventory
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setExtractedItemsForSelection([])
+                          setSelectedItemIndices(new Set())
+                          setReceiptImage("")
+                          setReceiptResult(null)
+                          setShowReceiptDialog(false)
+                        }}
+                        className="bg-white hover:bg-gray-50 text-gray-700 border-gray-300"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
+                {receiptResult && extractedItemsForSelection.length === 0 && (
                   <div className="space-y-4">
                     {receiptResult.items && receiptResult.items.length > 0 ? (
                       <div className="space-y-2">
@@ -1273,9 +1403,6 @@ export default function SmartGroceryApp() {
                                   {it.quantity} {it.unit}
                                   {typeof it.price === "number" ? ` • $${it.price.toFixed(2)}` : ""}
                                 </p>
-                              </div>
-                              <div className="text-xs text-green-600 font-medium">
-                                Ready to add
                               </div>
                             </div>
                           ))}
